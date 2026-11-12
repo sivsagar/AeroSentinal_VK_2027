@@ -1,0 +1,14 @@
+system:
+  name: AeroSentinel
+  version: "0.1.0"
+  team_id: VK26-AU-PAI-0399
+  mock_mode: false          # set true for simulation without hardware
+  log_level: INFO
+  data_dir: data/
+  log_dir: data/logs/
+
+performance:
+  cpu_warning_temp_c: 75
+  cpu_critical_temp_c: 85
+  min_free_ram_mb: 200
+  watchdog_interval_s: 5

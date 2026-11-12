@@ -1,0 +1,9 @@
+mission:
+  db_path: data/missions/aerosentinel.db
+  snapshot_dir: data/detections/
+  auto_save_interval_s: 30
+  max_mission_duration_h: 4
+  
+  report:
+    export_format: [json, csv]
+    output_dir: data/missions/reports/

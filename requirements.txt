@@ -1,0 +1,50 @@
+# AeroSentinel — Python Requirements
+# Target: Raspberry Pi 4B, Raspberry Pi OS Bookworm 64-bit (ARM64)
+# Python: 3.9+ (system python3 or pyenv)
+#
+# INSTALLATION NOTES:
+# 1. Install system packages first: see scripts/install_dependencies.sh
+# 2. Install picamera2 via apt: sudo apt install python3-picamera2
+# 3. Build pyrealsense2 from source: see HARDWARE_COMPATIBILITY.md §8
+# 4. Install remaining packages: pip install -r requirements.txt
+#
+# PACKAGES NOT IN THIS FILE (install separately):
+#   - picamera2: installed via apt (python3-picamera2)
+#   - pyrealsense2: installed via source build wheel
+
+# ---- Core: Numerical / Vision ----
+numpy==1.24.4
+opencv-python-headless==4.8.1.78
+pillow==10.1.0
+
+# ---- AI Inference ----
+# aarch64 wheel: https://github.com/microsoft/onnxruntime/releases or piwheels
+onnxruntime==1.16.3
+
+# ---- Web / Dashboard ----
+fastapi==0.104.1
+uvicorn[standard]==0.24.0
+websockets==12.0
+jinja2==3.1.2
+aiofiles==23.2.1
+python-multipart==0.0.6
+
+# ---- MAVLink ----
+pymavlink==2.4.41
+
+# ---- Configuration ----
+pyyaml==6.0.1
+python-dotenv==1.0.0
+
+# ---- Logging ----
+structlog==23.2.0
+
+# ---- Database ----
+sqlalchemy==2.0.23
+
+# ---- Utilities ----
+psutil==5.9.6          # system stats (CPU temp, memory monitoring)
+click==8.1.7           # CLI entry points
+
+# ---- Development (optional, install with: pip install -r requirements.txt -r requirements-dev.txt) ----
+# See pyproject.toml [project.optional-dependencies] dev

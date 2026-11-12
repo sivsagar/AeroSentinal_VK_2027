@@ -1,0 +1,9 @@
+rgbd_fusion:
+  enabled: true
+  sync_tolerance_ms: 100
+  depth_roi_padding_px: 10
+  invalid_distance_placeholder: null
+  
+  calibration:
+    use_calibration_file: false
+    calibration_file: calibration/rgbd_extrinsics/extrinsics.yaml

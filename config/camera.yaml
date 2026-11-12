@@ -1,0 +1,20 @@
+rgb_camera:
+  enabled: true
+  resolution: [1280, 720]
+  fps: 15
+  format: RGB888
+  exposure: auto
+  brightness: 50
+  mock: false
+  reconnect_interval_s: 5
+
+depth_camera:
+  enabled: true
+  depth_resolution: [640, 480]
+  color_resolution: [640, 480]
+  fps: 15
+  depth_format: Z16
+  color_format: BGR8
+  mock: false
+  usb_timeout_s: 10
+  reconnect_interval_s: 5

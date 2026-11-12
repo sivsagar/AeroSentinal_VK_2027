@@ -1,0 +1,146 @@
+# AeroSentinel .gitignore
+# Python + Raspberry Pi + Data directories
+
+# ============================================================
+# Python
+# ============================================================
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+eggs/
+.eggs/
+parts/
+var/
+sdist/
+wheels/
+pip-wheel-metadata/
+share/python-wheels/
+*.manifest
+*.spec
+pip-log.txt
+pip-delete-this-directory.txt
+
+# Virtual environments
+.env
+.venv
+env/
+venv/
+ENV/
+env.bak/
+venv.bak/
+.python-version
+
+# Type checking
+.mypy_cache/
+.dmypy.json
+dmypy.json
+.pytype/
+.pyre/
+
+# Testing
+.tox/
+.nox/
+.pytest_cache/
+.coverage
+.coverage.*
+htmlcov/
+*.coveragerc
+nosetests.xml
+coverage.xml
+*.cover
+junit*.xml
+
+# Distribution
+.pypackages/
+
+# ============================================================
+# IDEs and editors
+# ============================================================
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ============================================================
+# AeroSentinel data directories (never commit data)
+# ============================================================
+data/detections/*
+data/missions/*
+data/logs/*
+!data/detections/.gitkeep
+!data/missions/.gitkeep
+!data/logs/.gitkeep
+
+# ============================================================
+# Models (large binary files — use Git LFS or external storage)
+# ============================================================
+models/*.onnx
+models/*.pt
+models/*.tflite
+models/*.bin
+models/*.engine
+!models/README.md
+!models/.gitkeep
+
+# ============================================================
+# Calibration data (device-specific, not repo'd)
+# ============================================================
+calibration/rgb_camera/*.json
+calibration/rgb_camera/*.yaml
+calibration/realsense/*.json
+calibration/realsense/*.yaml
+calibration/rgbd_extrinsics/*.json
+calibration/rgbd_extrinsics/*.yaml
+
+# ============================================================
+# Secrets and environment
+# ============================================================
+.env
+.env.local
+.env.production
+secrets.yaml
+*.pem
+*.key
+*.crt
+
+# ============================================================
+# Raspberry Pi specific
+# ============================================================
+*.img
+*.zip
+*.tar.gz
+librealsense/
+librealsense-build/
+
+# ============================================================
+# Logs (keep structure, not content)
+# ============================================================
+*.log
+*.jsonl
+!data/logs/.gitkeep
+
+# ============================================================
+# SQLite databases
+# ============================================================
+*.db
+*.sqlite
+*.sqlite3
+*.db-wal
+*.db-shm
+
+# ============================================================
+# Build artifacts from librealsense
+# ============================================================
+build/
+CMakeFiles/
+CMakeCache.txt
+cmake_install.cmake
+Makefile

@@ -1,0 +1,30 @@
+depth_processing:
+  min_distance_m: 0.3
+  max_distance_m: 10.0
+  invalid_depth_value: 0
+  
+  filters:
+    decimation:
+      enabled: true
+      magnitude: 2
+    spatial:
+      enabled: true
+      alpha: 0.5
+      delta: 20
+      holes_fill: 1
+    temporal:
+      enabled: true
+      alpha: 0.4
+      delta: 20
+    hole_filling:
+      enabled: true
+      mode: 1
+
+  obstacle:
+    critical_distance_m: 1.0
+    warning_distance_m: 2.5
+    safe_distance_m: 4.0
+    roi_top_pct: 0.2
+    roi_bottom_pct: 0.8
+    left_region_pct: 0.33
+    right_region_pct: 0.66

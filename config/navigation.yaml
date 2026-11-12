@@ -1,0 +1,9 @@
+localization:
+  source: none   # none | mavlink_gps | visual_odometry | slam
+  confidence_threshold: 0.5
+  position_timeout_s: 5.0
+  
+slam:
+  enabled: false
+  engine: none   # orb_slam3 | rtabmap
+  note: "SLAM disabled pending computational feasibility study on RPi 4"

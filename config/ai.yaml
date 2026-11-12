@@ -1,0 +1,21 @@
+detection:
+  model_path: models/yolov8n.onnx
+  model_type: yolov8_onnx
+  confidence_threshold: 0.45
+  nms_threshold: 0.5
+  input_resolution: [320, 320]
+  inference_fps_target: 3
+  save_detections: false
+  detection_dir: data/detections/
+  
+  classes:
+    person:
+      id: 0
+      label: "Potential Survivor"
+      color: [0, 255, 0]
+  
+  target_classes: [0]  # COCO person class
+  
+  performance:
+    max_inference_latency_ms: 500
+    warmup_frames: 3

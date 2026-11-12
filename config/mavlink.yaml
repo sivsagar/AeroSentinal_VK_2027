@@ -1,0 +1,14 @@
+mavlink:
+  enabled: false
+  connection_string: "/dev/ttyAMA0"
+  baud_rate: 57600
+  timeout_s: 5
+  heartbeat_timeout_s: 10
+  read_only: true
+  
+  telemetry:
+    poll_interval_s: 0.5
+    gps: true
+    battery: true
+    attitude: true
+    flight_mode: true
