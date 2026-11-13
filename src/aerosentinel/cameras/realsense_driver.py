@@ -33,7 +33,7 @@ try:
 except ImportError:
     _RS_AVAILABLE = False
 
-from src.aerosentinel.cameras.camera_manager import BaseDepthDriver, IMUData
+from aerosentinel.cameras.camera_manager import BaseDepthDriver, IMUData
 
 logger = logging.getLogger(__name__)
 

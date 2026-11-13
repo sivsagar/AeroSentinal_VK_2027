@@ -12,3 +12,11 @@ performance:
   cpu_critical_temp_c: 85
   min_free_ram_mb: 200
   watchdog_interval_s: 5
+
+loop:
+  loop_hz: 10.0
+
+dashboard:
+  dashboard_video_fps: 7
+  dashboard_telemetry_hz: 2
+  dashboard_jpeg_quality: 65

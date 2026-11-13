@@ -29,7 +29,7 @@ except ImportError:
     _PICAMERA2_AVAILABLE = False
 
 # Deferred so the ImportError is only raised at instantiation time
-from src.aerosentinel.cameras.camera_manager import BaseRGBDriver
+from aerosentinel.cameras.camera_manager import BaseRGBDriver
 
 logger = logging.getLogger(__name__)
 

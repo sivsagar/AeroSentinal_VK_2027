@@ -132,12 +132,15 @@ class WebSocketManager:
         status = self.system_state.to_status_dict()
         tel = self.system_state.latest_telemetry
         obs = self.system_state.latest_obstacle
+        imu = self.system_state.latest_imu
 
         await self.broadcast_json({"type": "system_status", "data": status, "timestamp": time.time()})
         if tel:
             await self.broadcast_json({"type": "telemetry", "data": tel, "timestamp": time.time()})
         if obs:
             await self.broadcast_json({"type": "obstacle", "data": obs, "timestamp": time.time()})
+        if imu:
+            await self.broadcast_json({"type": "imu", "data": imu, "timestamp": time.time()})
 
     async def _send_frames(self) -> None:
         if not self._active_connections or not CV2_AVAILABLE:

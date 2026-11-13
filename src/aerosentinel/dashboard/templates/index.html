@@ -94,6 +94,25 @@
 
                 <hr class="divider">
 
+                <!-- IMU MONITORING (Module E) -->
+                <div class="card-header">
+                    <h2>D435i IMU Monitor</h2>
+                    <span id="imu-valid-badge" class="badge badge-inactive">NO DATA</span>
+                </div>
+                <div class="telemetry-grid">
+                    <div class="tel-item"><span class="label">Accel X:</span> <span id="imu-ax" class="val">-- m/s²</span></div>
+                    <div class="tel-item"><span class="label">Accel Y:</span> <span id="imu-ay" class="val">-- m/s²</span></div>
+                    <div class="tel-item"><span class="label">Accel Z:</span> <span id="imu-az" class="val">-- m/s²</span></div>
+                    <div class="tel-item"><span class="label">Gyro X:</span> <span id="imu-gx" class="val">-- rad/s</span></div>
+                    <div class="tel-item"><span class="label">Gyro Y:</span> <span id="imu-gy" class="val">-- rad/s</span></div>
+                    <div class="tel-item"><span class="label">Gyro Z:</span> <span id="imu-gz" class="val">-- rad/s</span></div>
+                    <div class="tel-item"><span class="label">Roll Est:</span> <span id="imu-roll" class="val">--°</span></div>
+                    <div class="tel-item"><span class="label">Pitch Est:</span> <span id="imu-pitch" class="val">--°</span></div>
+                </div>
+                <p style="font-size:0.65rem;color:#888;margin:4px 0 0 2px;">⚠️ D435i IMU is NOT navigation-grade. Advisory use only.</p>
+
+                <hr class="divider">
+
                 <div class="card-header">
                     <h2>Pi 4B System Health</h2>
                 </div>

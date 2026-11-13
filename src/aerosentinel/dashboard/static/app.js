@@ -58,6 +58,9 @@ document.addEventListener("DOMContentLoaded", () => {
             case "obstacle":
                 updateObstacle(msg.data);
                 break;
+            case "imu":
+                updateIMU(msg.data);
+                break;
             case "detections":
                 updateDetections(msg.data);
                 break;
@@ -111,6 +114,26 @@ document.addEventListener("DOMContentLoaded", () => {
         if (t.yaw_deg !== undefined && t.yaw_deg !== null) {
             document.getElementById("tel-yaw").textContent = `${t.yaw_deg.toFixed(0)}°`;
         }
+    }
+
+    function updateIMU(imu) {
+        if (!imu) return;
+        const badge = document.getElementById("imu-valid-badge");
+        if (badge) {
+            badge.textContent = imu.is_valid ? "VALID" : "NO DATA";
+            badge.className = "badge " + (imu.is_valid ? "badge-active" : "badge-inactive");
+        }
+        const fmt = (v, u) => v !== null && v !== undefined ? `${v.toFixed(3)} ${u}` : `-- ${u}`;
+        const fmtDeg = (v) => v !== null && v !== undefined ? `${v.toFixed(1)}°` : "--°";
+        const el = (id) => document.getElementById(id);
+        if (el("imu-ax")) el("imu-ax").textContent = fmt(imu.accel_x, "m/s²");
+        if (el("imu-ay")) el("imu-ay").textContent = fmt(imu.accel_y, "m/s²");
+        if (el("imu-az")) el("imu-az").textContent = fmt(imu.accel_z, "m/s²");
+        if (el("imu-gx")) el("imu-gx").textContent = fmt(imu.gyro_x, "rad/s");
+        if (el("imu-gy")) el("imu-gy").textContent = fmt(imu.gyro_y, "rad/s");
+        if (el("imu-gz")) el("imu-gz").textContent = fmt(imu.gyro_z, "rad/s");
+        if (el("imu-roll"))  el("imu-roll").textContent  = fmtDeg(imu.roll_estimate);
+        if (el("imu-pitch")) el("imu-pitch").textContent = fmtDeg(imu.pitch_estimate);
     }
 
     function updateObstacle(obs) {

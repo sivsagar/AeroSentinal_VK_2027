@@ -1,8 +1,21 @@
 """
 AeroSentinel — Main Entry Point
 =================================
-Parses CLI arguments, loads configuration, initialises subsystems,
+Parses CLI arguments, loads configuration, initialises all subsystems,
 and runs the main event loop.
+
+Subsystems initialised:
+  - CameraManager   (Module A)
+  - PersonDetector  (Module B)
+  - DepthProcessor + ObstacleDetector (Module C)
+  - RGBDFusion      (Module D)
+  - IMUProcessor    (Module E)
+  - LocalizationManager (Module F)
+  - HazardDetector  (Module G)
+  - MissionManager  (Module H)
+  - MAVLinkClient   (Module I — optional, read-only)
+  - DashboardApp    (Module J — optional, runs in background thread)
+  - DatabaseManager (Module K)
 """
 
 from __future__ import annotations
@@ -12,6 +25,7 @@ import os
 import platform
 import signal
 import sys
+import threading
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -69,19 +83,6 @@ logger = get_logger(__name__)
 
 
 def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
-    """
-    Parse command-line arguments.
-
-    Parameters
-    ----------
-    argv:
-        Argument list to parse; defaults to ``sys.argv[1:]``.
-
-    Returns
-    -------
-    argparse.Namespace
-        Parsed arguments.
-    """
     parser = argparse.ArgumentParser(
         prog="aerosentinel",
         description="AeroSentinel UAV Disaster Search & Rescue System",
@@ -109,6 +110,13 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
         action="store_true",
         help="Disable the web dashboard.",
     )
+    parser.add_argument(
+        "--dashboard-port",
+        metavar="PORT",
+        type=int,
+        default=8080,
+        help="Port for the web dashboard (default: 8080).",
+    )
     return parser.parse_args(argv)
 
 
@@ -118,7 +126,6 @@ def _parse_args(argv: Optional[List[str]] = None) -> argparse.Namespace:
 
 
 def _print_banner(version: str = _VERSION, team: str = _TEAM_ID) -> None:
-    """Print the ASCII startup banner."""
     print(_BANNER.format(version=version, team=team))
     print(f"  Platform : {platform.system()} {platform.release()} ({platform.machine()})")
     print(f"  Python   : {platform.python_version()}")
@@ -127,24 +134,6 @@ def _print_banner(version: str = _VERSION, team: str = _TEAM_ID) -> None:
 
 
 def _load_config(config_dir: str) -> ConfigLoader:
-    """
-    Load all YAML config files from *config_dir*.
-
-    Parameters
-    ----------
-    config_dir:
-        Directory that contains the YAML files.
-
-    Returns
-    -------
-    ConfigLoader
-        Populated configuration object.
-
-    Raises
-    ------
-    SystemExit
-        If a file is missing or contains invalid YAML.
-    """
     loader = ConfigLoader(config_dir=config_dir)
     for filename in _CONFIG_FILES:
         path = Path(config_dir) / filename
@@ -165,7 +154,6 @@ def _load_config(config_dir: str) -> ConfigLoader:
 
 
 def _register_signal_handlers() -> None:
-    """Register SIGINT and SIGTERM handlers for graceful shutdown."""
     global _running
 
     def _handle_signal(signum: int, frame: Any) -> None:
@@ -178,74 +166,263 @@ def _register_signal_handlers() -> None:
     try:
         signal.signal(signal.SIGTERM, _handle_signal)
     except (OSError, AttributeError):
-        # SIGTERM not available on Windows
-        pass
+        pass  # SIGTERM not available on Windows
 
 
 # ---------------------------------------------------------------------------
-# Module init stubs
+# Module A — Camera Management
 # ---------------------------------------------------------------------------
 
 
 def _init_cameras(cfg: ConfigLoader, mock: bool) -> Optional[Any]:
-    """Initialise camera subsystem (stub)."""
+    """Initialise CameraManager with RGB + Depth drivers."""
     try:
-        logger.info("Initialising camera subsystem (mock=%s)…", mock)
-        # TODO: Phase 2 — import and initialise CameraManager
-        return None
+        from aerosentinel.cameras.camera_manager import CameraManager
+
+        camera_cfg = {}
+        try:
+            camera_cfg = cfg.get("rgb_camera", {})
+        except Exception:
+            pass
+
+        mgr = CameraManager(config=camera_cfg, mock=mock)
+        mgr.start_all()
+        logger.info("CameraManager started (mock=%s).", mock)
+        return mgr
     except Exception as exc:
         logger.error("Camera init failed: %s", exc)
         return None
 
 
-def _init_perception(cfg: ConfigLoader) -> Optional[Any]:
-    """Initialise AI perception pipeline (stub)."""
+# ---------------------------------------------------------------------------
+# Module B — AI Survivor Detection
+# ---------------------------------------------------------------------------
+
+
+def _init_perception(cfg: ConfigLoader, mock: bool) -> Optional[Any]:
+    """Initialise PersonDetector with ONNX or Mock inference engine."""
     try:
-        logger.info("Initialising AI perception pipeline…")
-        # TODO: Phase 3 — import and initialise Detector
-        return None
+        from aerosentinel.perception.inference_engine import MockInferenceEngine
+        from aerosentinel.perception.detector import PersonDetector
+
+        model_path = cfg.get("ai.model_path", None)
+        conf_threshold = cfg.get("ai.confidence_threshold", 0.4)
+
+        if mock or not model_path:
+            engine = MockInferenceEngine()
+            logger.info("AI perception: using MockInferenceEngine (no model path or mock mode).")
+        else:
+            try:
+                from aerosentinel.perception.inference_engine import ONNXInferenceEngine
+                engine = ONNXInferenceEngine(model_path=model_path)
+                logger.info("AI perception: ONNXInferenceEngine loaded from %s.", model_path)
+            except Exception as exc:
+                logger.warning("ONNX engine unavailable (%s); falling back to MockInferenceEngine.", exc)
+                engine = MockInferenceEngine()
+
+        detector = PersonDetector(engine=engine, conf_threshold=conf_threshold)
+        logger.info("PersonDetector initialised (conf_threshold=%.2f).", conf_threshold)
+        return detector
     except Exception as exc:
         logger.error("Perception init failed: %s", exc)
         return None
 
 
-def _init_mission(cfg: ConfigLoader) -> Optional[Any]:
-    """Initialise mission manager (stub)."""
+# ---------------------------------------------------------------------------
+# Module C — Depth-Based Obstacle Detection
+# ---------------------------------------------------------------------------
+
+
+def _init_obstacle_detector(cfg: ConfigLoader) -> Optional[Any]:
+    """Initialise DepthProcessor and ObstacleDetector."""
     try:
-        logger.info("Initialising mission manager…")
-        # TODO: Phase 4 — import and initialise MissionManager
+        from aerosentinel.perception.depth_processor import DepthProcessor
+        from aerosentinel.perception.obstacle_detector import ObstacleDetector
+
+        depth_proc = DepthProcessor()
+        obs_det = ObstacleDetector()
+        logger.info("DepthProcessor + ObstacleDetector initialised.")
+        return depth_proc, obs_det
+    except Exception as exc:
+        logger.error("Obstacle detector init failed: %s", exc)
+        return None, None
+
+
+# ---------------------------------------------------------------------------
+# Module D — RGB+Depth Fusion
+# ---------------------------------------------------------------------------
+
+
+def _init_fusion(cfg: ConfigLoader) -> Optional[Any]:
+    """Initialise RGBDFusion module."""
+    try:
+        from aerosentinel.perception.rgbd_fusion import RGBDFusion
+
+        fusion = RGBDFusion()
+        logger.info("RGBDFusion initialised.")
+        return fusion
+    except Exception as exc:
+        logger.error("Fusion init failed: %s", exc)
         return None
+
+
+# ---------------------------------------------------------------------------
+# Module E — IMU Processing
+# ---------------------------------------------------------------------------
+
+
+def _init_imu(cfg: ConfigLoader) -> Optional[Any]:
+    """Initialise IMUProcessor."""
+    try:
+        from aerosentinel.sensors.imu_processor import IMUProcessor
+
+        imu_proc = IMUProcessor()
+        logger.info("IMUProcessor initialised.")
+        return imu_proc
+    except Exception as exc:
+        logger.error("IMU processor init failed: %s", exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Module F — Navigation / Localization
+# ---------------------------------------------------------------------------
+
+
+def _init_localization(cfg: ConfigLoader) -> Optional[Any]:
+    """Initialise LocalizationManager."""
+    try:
+        from aerosentinel.localization.localization_interface import LocalizationManager
+
+        nav_cfg = {}
+        try:
+            nav_cfg = {"source": cfg.get("navigation.localization_source", "none")}
+        except Exception:
+            pass
+
+        loc_mgr = LocalizationManager(config=nav_cfg)
+        logger.info("LocalizationManager initialised.")
+        return loc_mgr
+    except Exception as exc:
+        logger.error("Localization init failed: %s", exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Module G — Hazard Detection
+# ---------------------------------------------------------------------------
+
+
+def _init_hazard_detector(cfg: ConfigLoader) -> Optional[Any]:
+    """Initialise HazardDetector."""
+    try:
+        from aerosentinel.perception.hazard_detector import HazardDetector
+
+        hd = HazardDetector()
+        logger.info("HazardDetector initialised.")
+        return hd
+    except Exception as exc:
+        logger.error("Hazard detector init failed: %s", exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
+# Module H — Mission Management + Module K — Storage
+# ---------------------------------------------------------------------------
+
+
+def _init_mission(cfg: ConfigLoader) -> tuple:
+    """Initialise DatabaseManager and MissionManager."""
+    try:
+        from aerosentinel.storage.database import DatabaseManager
+        from aerosentinel.mission.mission_manager import MissionManager
+
+        db_path = cfg.get("mission.db_path", "data/aerosentinel.db")
+        snapshot_dir = cfg.get("mission.snapshot_dir", "data/detections")
+
+        db = DatabaseManager(db_path=db_path)
+        db.connect()
+        db.create_tables()
+
+        mm = MissionManager(db_manager=db, snapshot_dir=snapshot_dir)
+        logger.info("MissionManager + DatabaseManager initialised (db=%s).", db_path)
+        return db, mm
     except Exception as exc:
         logger.error("Mission manager init failed: %s", exc)
+        return None, None
+
+
+# ---------------------------------------------------------------------------
+# Module I — MAVLink (Read-Only, Optional)
+# ---------------------------------------------------------------------------
+
+
+def _init_mavlink(cfg: ConfigLoader) -> Optional[Any]:
+    """Initialise MAVLink read-only client if enabled in config."""
+    mavlink_enabled = cfg.get("mavlink.enabled", False)
+    if not mavlink_enabled:
+        logger.info("MAVLink disabled in config (mavlink.enabled=false).")
+        return None
+    try:
+        from aerosentinel.flight.mavlink_client import MAVLinkClient
+
+        conn_str = cfg.get("mavlink.connection_string", "udp:0.0.0.0:14550")
+        baud = cfg.get("mavlink.baud_rate", 57600)
+        client = MAVLinkClient(connection_string=conn_str, baud_rate=baud, read_only=True)
+        client.connect()
+        logger.info("MAVLinkClient connected (read-only): %s", conn_str)
+        return client
+    except ImportError as exc:
+        logger.warning("pymavlink not installed — MAVLink disabled. (%s)", exc)
+        return None
+    except Exception as exc:
+        logger.error("MAVLink init failed: %s", exc)
         return None
 
 
-def _init_dashboard(cfg: ConfigLoader, enabled: bool) -> Optional[Any]:
-    """Initialise web dashboard (stub)."""
+# ---------------------------------------------------------------------------
+# Module J — Ground Control Dashboard
+# ---------------------------------------------------------------------------
+
+
+def _init_dashboard(
+    cfg: ConfigLoader,
+    enabled: bool,
+    system_state: Any,
+    port: int = 8080,
+) -> Optional[threading.Thread]:
+    """
+    Initialise and start the FastAPI dashboard in a background daemon thread.
+    Returns the thread (already started) or None if disabled.
+    """
     if not enabled:
         logger.info("Dashboard disabled (--no-dashboard).")
         return None
     try:
-        logger.info("Initialising web dashboard…")
-        # TODO: Phase 5 — import and start Dashboard
+        from aerosentinel.dashboard.app import create_app
+        import uvicorn
+
+        dash_cfg = {
+            "ws_video_fps": cfg.get("system.dashboard_video_fps", 7),
+            "ws_telemetry_hz": cfg.get("system.dashboard_telemetry_hz", 2),
+            "jpeg_quality": cfg.get("system.dashboard_jpeg_quality", 65),
+        }
+        app = create_app(config=dash_cfg, system_state=system_state)
+
+        def _run_server() -> None:
+            uvicorn.run(app, host="0.0.0.0", port=port, log_level="warning")
+
+        t = threading.Thread(target=_run_server, name="dashboard-server", daemon=True)
+        t.start()
+        logger.info(
+            "Dashboard started on http://0.0.0.0:%d (background thread).", port
+        )
+        return t
+    except ImportError as exc:
+        logger.warning("FastAPI/uvicorn not installed — dashboard disabled. (%s)", exc)
         return None
     except Exception as exc:
         logger.error("Dashboard init failed: %s", exc)
-        return None
-
-
-def _init_mavlink(cfg: ConfigLoader) -> Optional[Any]:
-    """Initialise MAVLink telemetry client (stub)."""
-    mavlink_enabled = cfg.get("mavlink.enabled", False)
-    if not mavlink_enabled:
-        logger.info("MAVLink disabled in config.")
-        return None
-    try:
-        logger.info("Initialising MAVLink client…")
-        # TODO: Phase 6 — import and initialise MAVLinkClient
-        return None
-    except Exception as exc:
-        logger.error("MAVLink init failed: %s", exc)
         return None
 
 
@@ -254,16 +431,33 @@ def _init_mavlink(cfg: ConfigLoader) -> Optional[Any]:
 # ---------------------------------------------------------------------------
 
 
-def _main_loop(monitor: PerformanceMonitor, loop_hz: float = 10.0) -> None:
+def _main_loop(
+    monitor: PerformanceMonitor,
+    camera_mgr: Optional[Any],
+    detector: Optional[Any],
+    depth_proc: Optional[Any],
+    obs_det: Optional[Any],
+    fusion: Optional[Any],
+    imu_proc: Optional[Any],
+    loc_mgr: Optional[Any],
+    hazard_det: Optional[Any],
+    mission_mgr: Optional[Any],
+    mavlink_client: Optional[Any],
+    system_state: Optional[Any],
+    loop_hz: float = 10.0,
+) -> None:
     """
     Main application event loop.
 
-    Parameters
-    ----------
-    monitor:
-        Active :class:`PerformanceMonitor` instance.
-    loop_hz:
-        Target loop frequency in Hz.
+    Each tick (at ~loop_hz Hz):
+      1. Acquire RGB + Depth frames
+      2. Run AI detection
+      3. Run depth/obstacle processing
+      4. Fuse RGB + Depth
+      5. Process IMU
+      6. Assess hazards
+      7. Update MAVLink telemetry → localization
+      8. Update dashboard system state
     """
     global _running
     period = 1.0 / max(loop_hz, 1.0)
@@ -272,7 +466,177 @@ def _main_loop(monitor: PerformanceMonitor, loop_hz: float = 10.0) -> None:
     while _running:
         t0 = time.perf_counter()
 
-        # TODO: Phase 2–6 — call subsystem update methods here
+        # ----------------------------------------------------------------
+        # 1. Camera frames
+        # ----------------------------------------------------------------
+        rgb_frame = None
+        depth_result = None
+
+        if camera_mgr is not None:
+            try:
+                rgb_result = camera_mgr.get_rgb_frame()
+                if rgb_result is not None:
+                    rgb_frame, _ = rgb_result
+
+                depth_result = camera_mgr.get_depth_frame()
+            except Exception as exc:
+                logger.debug("Camera frame error: %s", exc)
+
+        # ----------------------------------------------------------------
+        # 2. AI detection (Module B)
+        # ----------------------------------------------------------------
+        detections = []
+        annotated_frame = rgb_frame
+
+        if detector is not None and rgb_frame is not None:
+            try:
+                annotated_frame, detections = detector.detect(rgb_frame)
+            except Exception as exc:
+                logger.debug("Detection error: %s", exc)
+
+        # ----------------------------------------------------------------
+        # 3. Depth + Obstacle processing (Module C)
+        # ----------------------------------------------------------------
+        obstacle_report = None
+
+        if depth_result is not None and depth_proc is not None and obs_det is not None:
+            try:
+                depth_mm, color_bgr, _ts = depth_result
+                # depth_proc.process() expects uint16 mm array
+                processed_depth = depth_proc.process(depth_mm)
+                depth_m = processed_depth.depth_meters   # float32 metres, 0=invalid
+                obstacle_report = obs_det.analyze(depth_m)
+
+                if system_state is not None and obstacle_report is not None:
+                    system_state.latest_obstacle = {
+                        "overall_status": obstacle_report.overall_status.name,
+                        "warning_active": obstacle_report.warning_active,
+                        "closest_obstacle_m": obstacle_report.closest_obstacle_m,
+                        "left": {
+                            "status": obstacle_report.left.status.name,
+                            "min_distance_m": obstacle_report.left.min_distance_m,
+                        },
+                        "center": {
+                            "status": obstacle_report.center.status.name,
+                            "min_distance_m": obstacle_report.center.min_distance_m,
+                        },
+                        "right": {
+                            "status": obstacle_report.right.status.name,
+                            "min_distance_m": obstacle_report.right.min_distance_m,
+                        },
+                    }
+                    # Push colourised depth visualisation to dashboard
+                    if system_state is not None:
+                        system_state.depth_frame = processed_depth.colormap
+            except Exception as exc:
+                logger.debug("Obstacle processing error: %s", exc)
+
+        # ----------------------------------------------------------------
+        # 4. RGB-D Fusion (Module D)
+        # ----------------------------------------------------------------
+        fused_detections = []
+
+        if fusion is not None and detections and depth_result is not None:
+            try:
+                depth_mm, _, _ts = depth_result
+                import numpy as np
+                depth_m_for_fusion = depth_mm.astype(np.float32) * 0.001
+                fused_detections = fusion.fuse(detections, depth_m_for_fusion)
+            except Exception as exc:
+                logger.debug("Fusion error: %s", exc)
+
+        # ----------------------------------------------------------------
+        # 5. IMU (Module E)
+        # ----------------------------------------------------------------
+        if camera_mgr is not None and imu_proc is not None:
+            try:
+                raw_imu = camera_mgr.get_imu_data()
+                if raw_imu is not None:
+                    processed_imu = imu_proc.process(raw_imu)
+                    if system_state is not None:
+                        system_state.latest_imu = {
+                            "timestamp": processed_imu.timestamp,
+                            "accel_x": processed_imu.accel_x,
+                            "accel_y": processed_imu.accel_y,
+                            "accel_z": processed_imu.accel_z,
+                            "gyro_x": processed_imu.gyro_x,
+                            "gyro_y": processed_imu.gyro_y,
+                            "gyro_z": processed_imu.gyro_z,
+                            "roll_estimate": processed_imu.roll_estimate,
+                            "pitch_estimate": processed_imu.pitch_estimate,
+                            "is_valid": processed_imu.is_valid,
+                        }
+            except Exception as exc:
+                logger.debug("IMU processing error: %s", exc)
+
+        # ----------------------------------------------------------------
+        # 6. Hazard detection (Module G)
+        # ----------------------------------------------------------------
+        hazard_events = []
+
+        if hazard_det is not None and (detections or obstacle_report is not None):
+            try:
+                hazard_events = hazard_det.assess(detections, obstacle_report)
+                for event in hazard_events:
+                    logger.info(
+                        "HAZARD: %s confidence=%.2f dist=%s",
+                        event.category.value,
+                        event.confidence,
+                        f"{event.distance_m:.2f}m" if event.distance_m else "N/A",
+                    )
+            except Exception as exc:
+                logger.debug("Hazard assessment error: %s", exc)
+
+        # ----------------------------------------------------------------
+        # 7. MAVLink telemetry + localization (Modules F + I)
+        # ----------------------------------------------------------------
+        if mavlink_client is not None:
+            try:
+                tel = mavlink_client.get_telemetry()
+                if system_state is not None:
+                    system_state.latest_telemetry = tel
+                    system_state.mavlink_connected = tel.get("is_connected", False)
+                if loc_mgr is not None:
+                    # Feed telemetry dict into localization manager as a simple namespace
+                    class _TelProxy:
+                        pass
+                    proxy = _TelProxy()
+                    for k, v in tel.items():
+                        setattr(proxy, k, v)
+                    loc_mgr.set_telemetry(proxy)
+            except Exception as exc:
+                logger.debug("MAVLink telemetry update error: %s", exc)
+
+        # ----------------------------------------------------------------
+        # 8. Update dashboard system state frames
+        # ----------------------------------------------------------------
+        if system_state is not None:
+            if annotated_frame is not None:
+                system_state.rgb_frame = annotated_frame
+            if system_state.mission_active and mission_mgr is not None:
+                # Record survivor detections during active mission
+                active_mission = mission_mgr.get_active_mission()
+                if active_mission is not None:
+                    for fd in fused_detections:
+                        try:
+                            fd_dict = fd.to_dict()
+                            det_dict = {
+                                "class_name": "Potential Survivor",
+                                "confidence": fd_dict.get("confidence", 0.0),
+                                "distance_m": fd_dict.get("distance_m"),
+                                "bbox_json": str(fd.detection.bbox),
+                                "hazard_category": "PERSON_DETECTED",
+                                "verification_status": "PENDING_HUMAN_REVIEW",
+                                "lat": None,
+                                "lon": None,
+                            }
+                            mission_mgr.record_detection(active_mission.id, det_dict)
+                        except Exception as exc:
+                            logger.debug("Detection record error: %s", exc)
+
+        # ----------------------------------------------------------------
+        # 9. Performance tick
+        # ----------------------------------------------------------------
         monitor.tick()
 
         elapsed = time.perf_counter() - t0
@@ -290,34 +654,17 @@ def _main_loop(monitor: PerformanceMonitor, loop_hz: float = 10.0) -> None:
 
 
 def main(argv: Optional[List[str]] = None) -> int:
-    """
-    AeroSentinel application entry point.
-
-    Parameters
-    ----------
-    argv:
-        CLI argument list; defaults to ``sys.argv[1:]``.
-
-    Returns
-    -------
-    int
-        Exit code (0 = success, non-zero = error).
-    """
     args = _parse_args(argv)
 
-    # --- Banner ---
     _print_banner()
 
-    # --- Config ---
     cfg = _load_config(args.config)
 
-    # Apply CLI overrides to config
     if args.mock:
         cfg.set("system.mock_mode", True)
     if args.log_level:
         cfg.set("system.log_level", args.log_level)
 
-    # --- Logging ---
     log_config: Dict[str, Any] = {
         "log_level": cfg.get("system.log_level", "INFO"),
         "log_dir": cfg.get("system.log_dir", "data/logs"),
@@ -330,30 +677,122 @@ def main(argv: Optional[List[str]] = None) -> int:
         cfg.get("system.mock_mode", False),
     )
 
-    # --- Signal handlers ---
     _register_signal_handlers()
 
-    # --- Performance monitor ---
+    mock = cfg.get("system.mock_mode", False)
+
     monitor = PerformanceMonitor(enable_background=True)
     monitor.start()
 
+    # ----------------------------------------------------------------
+    # Shared dashboard system state (populated by all modules)
+    # ----------------------------------------------------------------
     try:
-        # --- Module initialisation ---
-        _init_cameras(cfg, mock=cfg.get("system.mock_mode", False))
-        _init_perception(cfg)
-        _init_mission(cfg)
-        _init_mavlink(cfg)
-        _init_dashboard(cfg, enabled=not args.no_dashboard)
+        from aerosentinel.dashboard.app import SystemState
+        system_state = SystemState()
+    except Exception:
+        system_state = None
 
-        logger.info("All modules initialised. Starting main loop.")
+    try:
+        # --- Module A: Cameras ---
+        camera_mgr = _init_cameras(cfg, mock=mock)
+        if system_state and camera_mgr is not None:
+            cam_status = camera_mgr.status()
+            system_state.rgb_camera_connected = cam_status.get("rgb", {}).get("connected", False)
+            system_state.d435i_connected = cam_status.get("depth", {}).get("connected", False)
 
-        # --- Main loop ---
-        _main_loop(monitor)
+        # --- Module B: AI Perception ---
+        detector = _init_perception(cfg, mock=mock)
+        if system_state and detector is not None:
+            system_state.ai_engine_running = True
+
+        # --- Module C: Obstacle Detection ---
+        depth_proc, obs_det = _init_obstacle_detector(cfg)
+        if system_state and depth_proc is not None:
+            system_state.depth_processing_running = True
+
+        # --- Module D: Fusion ---
+        fusion = _init_fusion(cfg)
+
+        # --- Module E: IMU ---
+        imu_proc = _init_imu(cfg)
+
+        # --- Module F: Localization ---
+        loc_mgr = _init_localization(cfg)
+
+        # --- Module G: Hazard Detection ---
+        hazard_det = _init_hazard_detector(cfg)
+
+        # --- Module H + K: Mission + Storage ---
+        db, mission_mgr = _init_mission(cfg)
+
+        # --- Module I: MAVLink (read-only, optional) ---
+        mavlink_client = _init_mavlink(cfg)
+
+        # --- Module J: Dashboard ---
+        dashboard_thread = _init_dashboard(
+            cfg,
+            enabled=not args.no_dashboard,
+            system_state=system_state,
+            port=args.dashboard_port,
+        )
+
+        logger.info("All modules initialised successfully. Starting main loop.")
+
+        # --- Main Loop ---
+        _main_loop(
+            monitor=monitor,
+            camera_mgr=camera_mgr,
+            detector=detector,
+            depth_proc=depth_proc,
+            obs_det=obs_det,
+            fusion=fusion,
+            imu_proc=imu_proc,
+            loc_mgr=loc_mgr,
+            hazard_det=hazard_det,
+            mission_mgr=mission_mgr,
+            mavlink_client=mavlink_client,
+            system_state=system_state,
+            loop_hz=cfg.get("system.loop_hz", 10.0),
+        )
 
     except Exception as exc:
         logger.exception("Fatal error in main: %s", exc)
         return 1
     finally:
+        # --- Graceful teardown ---
+        logger.info("Shutting down subsystems…")
+
+        try:
+            if mission_mgr is not None:
+                mission_mgr.shutdown()
+        except Exception as exc:
+            logger.debug("Mission manager shutdown error: %s", exc)
+
+        try:
+            if mavlink_client is not None:
+                mavlink_client.disconnect()
+        except Exception as exc:
+            logger.debug("MAVLink disconnect error: %s", exc)
+
+        try:
+            if camera_mgr is not None:
+                camera_mgr.stop_all()
+        except Exception as exc:
+            logger.debug("Camera stop error: %s", exc)
+
+        try:
+            if detector is not None:
+                detector.stop()
+        except Exception as exc:
+            logger.debug("Detector stop error: %s", exc)
+
+        try:
+            if db is not None:
+                db.disconnect()
+        except Exception as exc:
+            logger.debug("DB disconnect error: %s", exc)
+
         monitor.stop()
         logger.info("AeroSentinel shutdown complete.")
         report = monitor.report()
