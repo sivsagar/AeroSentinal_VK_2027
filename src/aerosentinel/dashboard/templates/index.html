@@ -1,157 +1,269 @@
-<!DOCTYPE html>
+<!doctype html>
 <html lang="en">
-<head>
-    <meta charset="UTF-8">
-    <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AeroSentinel — Ground Control Mission Dashboard</title>
-    <link rel="stylesheet" href="/static/style.css">
-</head>
-<body>
-    <div class="app-container">
-        <!-- HEADER -->
-        <header class="header">
-            <div class="logo-area">
-                <span class="icon">🚁</span>
-                <div>
-                    <h1>AEROSENTINEL</h1>
-                    <span class="subtitle">AI-Powered Disaster Search & Rescue | Raspberry Pi 4B + D435i</span>
-                </div>
-            </div>
-            <div class="header-status">
-                <div id="live-time" class="time-badge">00:00:00</div>
-                <div id="connection-status" class="status-pill status-disconnected">DISCONNECTED</div>
-            </div>
-        </header>
+	<head>
+		<meta charset="UTF-8" />
+		<meta name="viewport" content="width=device-width, initial-scale=1.0" />
+		<title>AeroSentinel — Ground Control Mission Dashboard</title>
+		<link rel="stylesheet" href="../static/style.css" />
+	</head>
+	<body>
+		<div class="app-container">
+			<!-- HEADER -->
+			<header class="header">
+				<div class="logo-area">
+					<!-- <span class="icon">🚁</span> -->
+					<div>
+						<h1>AEROSENTINEL</h1>
+						<span class="subtitle">
+							AI-Powered Disaster Search & Rescue | Raspberry Pi 4B +
+							D435i
+						</span>
+					</div>
+				</div>
+				<div class="header-status">
+					<div id="live-time" class="time-badge">00:00:00</div>
+					<div
+						id="connection-status"
+						class="status-pill status-disconnected"
+					>
+						DISCONNECTED
+					</div>
+				</div>
+			</header>
 
-        <!-- STATUS BAR -->
-        <div class="status-bar">
-            <div class="subsystem-item"><span id="ind-rgb" class="dot dot-red"></span> RGB Cam (Pi Cam 3)</div>
-            <div class="subsystem-item"><span id="ind-depth" class="dot dot-red"></span> Depth (D435i)</div>
-            <div class="subsystem-item"><span id="ind-ai" class="dot dot-red"></span> AI Perception</div>
-            <div class="subsystem-item"><span id="ind-mavlink" class="dot dot-red"></span> MAVLink Telemetry</div>
-            <div class="subsystem-item"><span id="ind-mission" class="dot dot-red"></span> Mission Lifecycle</div>
-            <div class="subsystem-item"><span id="ind-net" class="dot dot-red"></span> Network Online</div>
-        </div>
+			<!-- STATUS BAR -->
+			<div class="status-bar">
+				<div class="subsystem-item">
+					<span id="ind-rgb" class="dot dot-red"></span>
+					RGB Cam (Pi Cam 3)
+				</div>
+				<div class="subsystem-item">
+					<span id="ind-depth" class="dot dot-red"></span>
+					Depth (D435i)
+				</div>
+				<div class="subsystem-item">
+					<span id="ind-ai" class="dot dot-red"></span>
+					AI Perception
+				</div>
+				<div class="subsystem-item">
+					<span id="ind-mavlink" class="dot dot-red"></span>
+					MAVLink Telemetry
+				</div>
+				<div class="subsystem-item">
+					<span id="ind-mission" class="dot dot-red"></span>
+					Mission Lifecycle
+				</div>
+				<div class="subsystem-item">
+					<span id="ind-net" class="dot dot-red"></span>
+					Network Online
+				</div>
+			</div>
 
-        <!-- OBSTACLE ALERT BANNER -->
-        <div id="obstacle-alert" class="alert-banner alert-hidden">
-            ⚠️ <strong>CRITICAL OBSTACLE WARNING:</strong> Near-field hazard in flight path (<span id="alert-dist">0.0</span>m)
-        </div>
+			<!-- OBSTACLE ALERT BANNER -->
+			<div id="obstacle-alert" class="alert-banner alert-hidden">
+				⚠️
+				<strong>CRITICAL OBSTACLE WARNING:</strong>
+				Near-field hazard in flight path (
+				<span id="alert-dist">0.0</span>
+				m)
+			</div>
 
-        <!-- MAIN GRID LAYOUT -->
-        <main class="dashboard-grid">
-            <!-- LEFT: RGB CAMERA + AI OVERLAY -->
-            <section class="card video-card">
-                <div class="card-header">
-                    <h2>RGB Perception Stream</h2>
-                    <span id="rgb-fps" class="badge">0 FPS</span>
-                </div>
-                <div class="video-container">
-                    <img id="rgb-stream" src="" alt="RGB Feed Offline" class="stream-img">
-                    <div id="survivor-overlay" class="survivor-banner hidden">POTENTIAL SURVIVOR DETECTED</div>
-                </div>
-            </section>
+			<!-- MAIN GRID LAYOUT -->
+			<main class="dashboard-grid">
+				<!-- LEFT: RGB CAMERA + AI OVERLAY -->
+				<section class="card video-card">
+					<div class="card-header">
+						<h2>RGB Perception Stream</h2>
+						<span id="rgb-fps" class="badge">0 FPS</span>
+					</div>
+					<div class="video-container">
+						<img
+							id="rgb-stream"
+							src=""
+							alt="RGB Feed Offline"
+							class="stream-img"
+						/>
+						<div id="survivor-overlay" class="survivor-banner hidden">
+							POTENTIAL SURVIVOR DETECTED
+						</div>
+					</div>
+				</section>
 
-            <!-- CENTER: REAL-TIME DEPTH MAP -->
-            <section class="card video-card">
-                <div class="card-header">
-                    <h2>RealSense D435i Depth Map</h2>
-                    <span id="depth-status" class="badge">Depth: Ready</span>
-                </div>
-                <div class="video-container">
-                    <img id="depth-stream" src="" alt="Depth Feed Offline" class="stream-img">
-                </div>
-            </section>
+				<!-- CENTER: REAL-TIME DEPTH MAP -->
+				<section class="card video-card">
+					<div class="card-header">
+						<h2>RealSense D435i Depth Map</h2>
+						<span id="depth-status" class="badge">Depth: Ready</span>
+					</div>
+					<div class="video-container">
+						<img
+							id="depth-stream"
+							src=""
+							alt="Depth Feed Offline"
+							class="stream-img"
+						/>
+					</div>
+				</section>
 
-            <!-- RIGHT: MISSION & TELEMETRY -->
-            <section class="card sidebar-card">
-                <div class="card-header">
-                    <h2>Mission Control</h2>
-                    <span id="mission-state-tag" class="badge badge-inactive">INACTIVE</span>
-                </div>
-                <div class="mission-controls">
-                    <input type="text" id="mission-name-input" placeholder="Mission Name..." value="Disaster Recon Mission 1">
-                    <div class="btn-group">
-                        <button id="btn-start" class="btn btn-green">Start</button>
-                        <button id="btn-pause" class="btn btn-yellow">Pause</button>
-                        <button id="btn-stop" class="btn btn-red">Stop</button>
-                    </div>
-                </div>
+				<!-- RIGHT: MISSION & TELEMETRY -->
+				<section class="card sidebar-card">
+					<div class="card-header">
+						<h2>Mission Control</h2>
+						<span id="mission-state-tag" class="badge badge-inactive">
+							INACTIVE
+						</span>
+					</div>
+					<div class="mission-controls">
+						<input
+							type="text"
+							id="mission-name-input"
+							placeholder="Mission Name..."
+							value="Disaster Recon Mission 1"
+						/>
+						<div class="btn-group">
+							<button id="btn-start" class="btn btn-green">Start</button>
+							<button id="btn-pause" class="btn btn-yellow">
+								Pause
+							</button>
+							<button id="btn-stop" class="btn btn-red">Stop</button>
+						</div>
+					</div>
 
-                <hr class="divider">
+					<hr class="divider" />
 
-                <div class="card-header">
-                    <h2>Vehicle Telemetry (Read-Only)</h2>
-                </div>
-                <div class="telemetry-grid">
-                    <div class="tel-item"><span class="label">Battery:</span> <span id="tel-bat" class="val">--%</span></div>
-                    <div class="tel-item"><span class="label">Altitude:</span> <span id="tel-alt" class="val">-- m</span></div>
-                    <div class="tel-item"><span class="label">Mode:</span> <span id="tel-mode" class="val">--</span></div>
-                    <div class="tel-item"><span class="label">Armed:</span> <span id="tel-armed" class="val">--</span></div>
-                    <div class="tel-item"><span class="label">GPS:</span> <span id="tel-gps" class="val">No Fix</span></div>
-                    <div class="tel-item"><span class="label">Heading:</span> <span id="tel-yaw" class="val">--°</span></div>
-                </div>
+					<div class="card-header">
+						<h2>Vehicle Telemetry (Read-Only)</h2>
+					</div>
+					<div class="telemetry-grid">
+						<div class="tel-item">
+							<span class="label">Battery:</span>
+							<span id="tel-bat" class="val">--%</span>
+						</div>
+						<div class="tel-item">
+							<span class="label">Altitude:</span>
+							<span id="tel-alt" class="val">-- m</span>
+						</div>
+						<div class="tel-item">
+							<span class="label">Mode:</span>
+							<span id="tel-mode" class="val">--</span>
+						</div>
+						<div class="tel-item">
+							<span class="label">Armed:</span>
+							<span id="tel-armed" class="val">--</span>
+						</div>
+						<div class="tel-item">
+							<span class="label">GPS:</span>
+							<span id="tel-gps" class="val">No Fix</span>
+						</div>
+						<div class="tel-item">
+							<span class="label">Heading:</span>
+							<span id="tel-yaw" class="val">--°</span>
+						</div>
+					</div>
 
-                <hr class="divider">
+					<hr class="divider" />
 
-                <!-- IMU MONITORING (Module E) -->
-                <div class="card-header">
-                    <h2>D435i IMU Monitor</h2>
-                    <span id="imu-valid-badge" class="badge badge-inactive">NO DATA</span>
-                </div>
-                <div class="telemetry-grid">
-                    <div class="tel-item"><span class="label">Accel X:</span> <span id="imu-ax" class="val">-- m/s²</span></div>
-                    <div class="tel-item"><span class="label">Accel Y:</span> <span id="imu-ay" class="val">-- m/s²</span></div>
-                    <div class="tel-item"><span class="label">Accel Z:</span> <span id="imu-az" class="val">-- m/s²</span></div>
-                    <div class="tel-item"><span class="label">Gyro X:</span> <span id="imu-gx" class="val">-- rad/s</span></div>
-                    <div class="tel-item"><span class="label">Gyro Y:</span> <span id="imu-gy" class="val">-- rad/s</span></div>
-                    <div class="tel-item"><span class="label">Gyro Z:</span> <span id="imu-gz" class="val">-- rad/s</span></div>
-                    <div class="tel-item"><span class="label">Roll Est:</span> <span id="imu-roll" class="val">--°</span></div>
-                    <div class="tel-item"><span class="label">Pitch Est:</span> <span id="imu-pitch" class="val">--°</span></div>
-                </div>
-                <p style="font-size:0.65rem;color:#888;margin:4px 0 0 2px;">⚠️ D435i IMU is NOT navigation-grade. Advisory use only.</p>
+					<!-- IMU MONITORING (Module E) -->
+					<div class="card-header">
+						<h2>D435i IMU Monitor</h2>
+						<span id="imu-valid-badge" class="badge badge-inactive">
+							NO DATA
+						</span>
+					</div>
+					<div class="telemetry-grid">
+						<div class="tel-item">
+							<span class="label">Accel X:</span>
+							<span id="imu-ax" class="val">-- m/s²</span>
+						</div>
+						<div class="tel-item">
+							<span class="label">Accel Y:</span>
+							<span id="imu-ay" class="val">-- m/s²</span>
+						</div>
+						<div class="tel-item">
+							<span class="label">Accel Z:</span>
+							<span id="imu-az" class="val">-- m/s²</span>
+						</div>
+						<div class="tel-item">
+							<span class="label">Gyro X:</span>
+							<span id="imu-gx" class="val">-- rad/s</span>
+						</div>
+						<div class="tel-item">
+							<span class="label">Gyro Y:</span>
+							<span id="imu-gy" class="val">-- rad/s</span>
+						</div>
+						<div class="tel-item">
+							<span class="label">Gyro Z:</span>
+							<span id="imu-gz" class="val">-- rad/s</span>
+						</div>
+						<div class="tel-item">
+							<span class="label">Roll Est:</span>
+							<span id="imu-roll" class="val">--°</span>
+						</div>
+						<div class="tel-item">
+							<span class="label">Pitch Est:</span>
+							<span id="imu-pitch" class="val">--°</span>
+						</div>
+					</div>
+					<p style="font-size: 0.65rem; color: #888; margin: 4px 0 0 2px">
+						⚠️ D435i IMU is NOT navigation-grade. Advisory use only.
+					</p>
 
-                <hr class="divider">
+					<hr class="divider" />
 
-                <div class="card-header">
-                    <h2>Pi 4B System Health</h2>
-                </div>
-                <div class="telemetry-grid">
-                    <div class="tel-item"><span class="label">CPU Usage:</span> <span id="sys-cpu" class="val">--%</span></div>
-                    <div class="tel-item"><span class="label">RAM Usage:</span> <span id="sys-ram" class="val">--%</span></div>
-                    <div class="tel-item"><span class="label">CPU Temp:</span> <span id="sys-temp" class="val">--°C</span></div>
-                    <div class="tel-item"><span class="label">Drops:</span> <span id="sys-drops" class="val">0</span></div>
-                </div>
-            </section>
-        </main>
+					<div class="card-header">
+						<h2>Pi 4B System Health</h2>
+					</div>
+					<div class="telemetry-grid">
+						<div class="tel-item">
+							<span class="label">CPU Usage:</span>
+							<span id="sys-cpu" class="val">--%</span>
+						</div>
+						<div class="tel-item">
+							<span class="label">RAM Usage:</span>
+							<span id="sys-ram" class="val">--%</span>
+						</div>
+						<div class="tel-item">
+							<span class="label">CPU Temp:</span>
+							<span id="sys-temp" class="val">--°C</span>
+						</div>
+						<div class="tel-item">
+							<span class="label">Drops:</span>
+							<span id="sys-drops" class="val">0</span>
+						</div>
+					</div>
+				</section>
+			</main>
 
-        <!-- BOTTOM: DETECTIONS LOG -->
-        <section class="card table-card">
-            <div class="card-header">
-                <h2>Verified & Candidate Detections (Local SQLite Recorded)</h2>
-                <span id="det-count" class="badge">0 Detections</span>
-            </div>
-            <div class="table-container">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Category</th>
-                            <th>Confidence</th>
-                            <th>Distance</th>
-                            <th>Verification Status</th>
-                            <th>Geo Tag</th>
-                        </tr>
-                    </thead>
-                    <tbody id="detections-tbody">
-                        <tr><td colspan="6" class="text-muted">No detections recorded in current session.</td></tr>
-                    </tbody>
-                </table>
-            </div>
-        </section>
-    </div>
+			<!-- BOTTOM: DETECTIONS LOG -->
+			<section class="card table-card">
+				<div class="card-header">
+					<h2>Verified & Candidate Detections (Local SQLite Recorded)</h2>
+					<span id="det-count" class="badge">0 Detections</span>
+				</div>
+				<div class="table-container">
+					<table class="data-table">
+						<thead>
+							<tr>
+								<th>Time</th>
+								<th>Category</th>
+								<th>Confidence</th>
+								<th>Distance</th>
+								<th>Verification Status</th>
+								<th>Geo Tag</th>
+							</tr>
+						</thead>
+						<tbody id="detections-tbody">
+							<tr>
+								<td colspan="6" class="text-muted">
+									No detections recorded in current session.
+								</td>
+							</tr>
+						</tbody>
+					</table>
+				</div>
+			</section>
+		</div>
 
-    <script src="/static/app.js"></script>
-</body>
+		<script src="/static/app.js"></script>
+	</body>
 </html>
-

@@ -7,7 +7,47 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ---
 
-## [0.1.1] — 2026-11-14
+## [0.1.2] — 2026-11-14
+
+### Fixed — Multi-Person Tracking Validation and Reliability
+
+**Root causes addressed from hardware report (track IDs 6/7, age=3 frames, 60s→1.6s timestamps):**
+- Root cause 1 — `valid_depth_percent=0.0` with `distance_valid=True`: Fixed in v0.1.1 (`FusedDetection.__post_init__` invariant). Confirmed in all 51 regression tests.
+- Root cause 2 — `age_frames=3` after 60 s: Fixed in v0.1.1 (simulated timestamp injection). Now also fixed architecturally: `age_frames` increments on **every** tracker update (hit or missed), correctly representing track lifetime, not just matched frames.
+- Root cause 3 — Timestamps spanning only 1–1.6 s: Fixed in v0.1.1 (`ts` parameter propagation). Covered by `TestReq6_Timestamps`.
+
+### Added
+
+- **`last_known_distance_m`** field on `TrackedPerson`: preserves the most recent valid EMA distance across invalid frames. `estimated_distance_m` is `None` when current frame is invalid; `last_known_distance_m` holds the last good reading for display/logging without implying validity.
+- **`total_missed`** counter on `TrackedPerson`: cumulative missed frames since creation (never resets on reacquisition); distinct from `missed_frames` (consecutive only).
+- **`total_detections_processed`**, **`total_depth_valid_detections`**, **`total_depth_invalid_detections`**, **`peak_concurrent_tracks`**, **`confirmed_track_count`**, **`tentative_track_count`**, **`lost_track_count`**, **`expired_track_count`** in `PersonTracker.lifecycle_summary()`.
+- **`active_tracks()`**, **`lost_tracks()`**, **`expired_tracks()`** convenience accessors on `PersonTracker`.
+- **`track_duration_s(now=None)`** method on `TrackedPerson`.
+- **`config/tracking.yaml`**: dedicated tracker configuration file with all IoU, min-hits, max-missed, EMA-alpha, duplicate-suppression, depth range and coverage-threshold parameters documented.
+- **`scripts/multi_person_tracking_test.py`**: complete diagnostic script producing JSON reports with session timing, FPS, dropped frames, YOLO inference counts, per-track depth history, and Pi execution commands.
+- **`_CONFIG_FILES`** in `main.py` now includes `tracking.yaml`; `_init_tracker()` reads from `tracking.*` config keys.
+- **51 regression tests** (`tests/simulation/multi_person_tracking_test.py`) covering all 12 required scenarios:
+  1. Valid distance with nonzero valid-depth percentage
+  2. Invalid depth with zero valid-depth percentage
+  3. Stale distance preserved as `last_known_distance_m` after invalid frame
+  4. Complete depth metadata propagation
+  5. `age_frames` across hit AND missed updates
+  6. First-seen / last-seen timestamps with injected and real wall-clock time
+  7. Track creation and confirmation lifecycle events
+  8. Temporary detection loss
+  9. Reacquisition using the original track ID
+  10. Track expiration
+  11. Two-person tracking without ID duplication, peak concurrent count
+  12. Accurate JSON lifecycle reporting with all required fields
+
+### Test Results
+
+- **217 passed, 0 failed** (pytest 9.2.0, Python 3.13)
+- Previous baseline (v0.1.1): 189 passed. This release adds 28 new tests.
+
+---
+
+
 
 ### Fixed — RGB-D Depth Metadata Propagation & Tracking Lifecycle (bug report VK26-TRACK-001)
 

@@ -1,15 +1,29 @@
 """
 tests/simulation/multi_person_tracking_test.py
 
-60-second multi-person tracking lifecycle test.
-Verifies:
-  - Track age, hit count and first/last-seen timestamp accuracy
-  - RGB-D depth metadata propagation into every tracked person
-  - Consistency invariant: distance_valid=True requires valid_depth_percent > 0
-  - EMA distance does not make invalid depth appear valid
-  - Lifecycle events (created, confirmed, lost, reacquired, expired) recorded
-  - Monotonic track IDs
-  - JSON lifecycle report contains per-track history
+Multi-person tracking lifecycle and RGB-D metadata regression tests.
+
+Covers:
+  1.  Valid distance with nonzero valid-depth percentage.
+  2.  Invalid depth with zero valid-depth percentage.
+  3.  Stale (last-known) distance preserved after invalid depth frame.
+  4.  Correct depth metadata propagation into every TrackedPerson.
+  5.  Track age_frames across multiple updates (hit AND missed frames).
+  6.  First-seen and last-seen timestamps.
+  7.  Track creation and confirmation.
+  8.  Temporary detection loss.
+  9.  Reacquisition using the original track ID.
+  10. Track expiration.
+  11. Two-person tracking without ID duplication.
+  12. Accurate JSON lifecycle reporting.
+
+Additionally:
+  - 60-second simulated lifecycle report.
+  - Depth dropout does not produce distance_valid=True.
+  - Sparse depth below threshold is invalid.
+  - EMA distance does not persist as valid after invalid frame.
+  - FusedDetection invariant tests.
+  - RGBDFusion valid_depth_percent regression tests.
 """
 
 from __future__ import annotations
@@ -25,7 +39,7 @@ import numpy as np
 import pytest
 
 # ---------------------------------------------------------------------------
-# Path setup — same pattern as other simulation tests
+# Path setup
 # ---------------------------------------------------------------------------
 _REPO = Path(__file__).resolve().parent.parent.parent
 sys.path.insert(0, str(_REPO / "src"))
@@ -33,7 +47,7 @@ sys.path.insert(0, str(_REPO / "simulation"))
 
 
 # ---------------------------------------------------------------------------
-# Helpers
+# Shared helpers
 # ---------------------------------------------------------------------------
 
 def _det(cx: int = 320, cy: int = 240, half: int = 50, conf: float = 0.88) -> "Detection":
@@ -67,525 +81,876 @@ def _depth_sparse(h: int = 480, w: int = 640, dist_m: float = 3.0, pct: float = 
     return arr
 
 
+def _make_fd(
+    dist_m: Optional[float],
+    valid: bool,
+    pct: float,
+    method: str = "center",
+    cx: int = 320,
+    cy: int = 240,
+    half: int = 50,
+) -> "FusedDetection":
+    from aerosentinel.perception.inference_engine import Detection
+    from aerosentinel.perception.rgbd_fusion import FusedDetection
+    det = Detection(0, "person", 0.9, (cx - half, cy - half, cx + half, cy + half), time.time())
+    return FusedDetection(
+        detection=det,
+        distance_m=dist_m,
+        distance_valid=valid,
+        depth_method=method,
+        valid_depth_percent=pct,
+    )
+
+
+def _tracker_and_fusion(
+    min_hits: int = 3,
+    max_missed: int = 5,
+    max_expired_age_s: float = 20.0,
+    ema_alpha: float = 0.7,
+    min_valid_depth_pct: float = 5.0,
+):
+    from aerosentinel.perception.person_tracker import PersonTracker
+    from aerosentinel.perception.rgbd_fusion import RGBDFusion
+    tracker = PersonTracker(
+        iou_threshold=0.3,
+        min_hits=min_hits,
+        max_missed=max_missed,
+        max_expired_age_s=max_expired_age_s,
+        ema_alpha=ema_alpha,
+    )
+    fusion = RGBDFusion(
+        min_valid_depth_m=0.1,
+        max_valid_depth_m=10.0,
+        min_valid_depth_pct=min_valid_depth_pct,
+    )
+    return tracker, fusion
+
+
 # ---------------------------------------------------------------------------
-# 60-second simulation test
+# 60-second simulation
 # ---------------------------------------------------------------------------
 
 class TestMultiPersonTracking60s:
     """
     Simulates a ~60-second tracking session at 10 Hz (600 frames).
-    Two synthetic persons appear, one disappears and reappears.
-    Verifies all lifecycle events and depth metadata consistency.
+    Person A is visible for all 600 frames at ~4.0 m.
+    Person B appears at frame 100, disappears at frame 300, reappears at frame 450.
+    Sensor dropout (zero depth) occurs frames 200–249.
     """
 
     @pytest.fixture(autouse=True)
     def _reset_tracker_id(self):
-        """Reset global track-ID counter before each test for isolation."""
         import aerosentinel.perception.person_tracker as _pt
         _pt._NEXT_TRACK_ID = 1
 
-    def _make_tracker_and_fusion(self):
-        from aerosentinel.perception.person_tracker import PersonTracker
-        from aerosentinel.perception.rgbd_fusion import RGBDFusion
-
-        tracker = PersonTracker(
-            iou_threshold=0.3,
-            min_hits=3,
-            max_missed=5,
-            max_expired_age_s=20.0,
-            ema_alpha=0.3,
-        )
-        fusion = RGBDFusion(
-            min_valid_depth_m=0.1,
-            max_valid_depth_m=10.0,
-            min_valid_depth_pct=5.0,
-        )
-        return tracker, fusion
-
     def test_60s_lifecycle_report(self):
-        """
-        Run 600 frames at simulated 10 Hz ≈ 60 s.
-        Person A is visible all 600 frames at 4.0 m.
-        Person B appears at frame 100, disappears at frame 300, reappears at frame 450.
-        Depth becomes zero for all tracks frames 200–250 (sensor dropout).
-        """
-        from aerosentinel.perception.person_tracker import (
-            TrackState, LifecycleEvent, PersonTracker,
-        )
+        from aerosentinel.perception.person_tracker import TrackState, LifecycleEvent
         from aerosentinel.perception.rgbd_fusion import RGBDFusion
 
-        tracker, fusion = self._make_tracker_and_fusion()
+        tracker, fusion = _tracker_and_fusion(min_hits=3, max_missed=5, max_expired_age_s=20.0)
 
         FPS = 10
         TOTAL_FRAMES = 600
         frame_duration = 1.0 / FPS
         t0 = time.time()
-
         all_confirmed: List[dict] = []
 
         for frame_idx in range(TOTAL_FRAMES):
             frame_time = frame_idx * frame_duration
-            t_sim = t0 + frame_time  # simulated mission timestamp (absolute)
+            t_sim = t0 + frame_time
 
-            # Determine which persons are visible this frame
             dets = [_det(cx=320, cy=240)]  # Person A always visible
-
             person_b_visible = (100 <= frame_idx < 300) or (frame_idx >= 450)
             if person_b_visible:
-                dets.append(_det(cx=160, cy=240, half=40))  # Person B
+                dets.append(_det(cx=160, cy=240, half=40))
 
-            # Determine depth quality
-            if 200 <= frame_idx < 250:
-                depth_m = _depth_zero()     # sensor dropout window
-            else:
-                depth_m = _depth_valid(dist_m=4.0 + 0.001 * frame_idx)
+            depth_m = _depth_zero() if 200 <= frame_idx < 250 else _depth_valid(dist_m=4.0 + 0.001 * frame_idx)
 
             fused = fusion.fuse(dets, depth_m)
             confirmed = tracker.update(fused, ts=t_sim)
             all_confirmed.extend(c.to_dict() for c in confirmed)
 
-        # ----------------------------------------------------------------
-        # Gather lifecycle report
-        # ----------------------------------------------------------------
         report = tracker.lifecycle_summary()
         report["session_duration_s"] = round(TOTAL_FRAMES * frame_duration, 2)
         report["frames_simulated"] = TOTAL_FRAMES
         report["fps_simulated"] = FPS
 
-        # ----------------------------------------------------------------
-        # Assertions: lifecycle counts
-        # ----------------------------------------------------------------
-        assert report["total_tracks_created"] >= 2, "Should have created at least 2 tracks"
-        assert report["total_tracks_confirmed"] >= 2, "At least 2 tracks confirmed"
+        # Lifecycle counts
+        assert report["total_tracks_created"] >= 2
+        assert report["total_tracks_confirmed"] >= 2
         assert report["total_tracks_lost"] >= 1, "Person B should have been lost"
         assert report["total_tracks_reacquired"] >= 1, "Person B should reappear"
-
-        # ----------------------------------------------------------------
-        # Assertions: update count
-        # ----------------------------------------------------------------
         assert report["total_update_calls"] == TOTAL_FRAMES
+        assert report["peak_concurrent_tracks"] >= 2
 
-        # ----------------------------------------------------------------
-        # Assertions: per-track IDs are monotonic
-        # ----------------------------------------------------------------
+        # Monotonic track IDs
         track_ids = [int(k) for k in report["tracks"].keys()]
-        assert track_ids == sorted(track_ids), "Track IDs must be monotonically increasing"
-        assert all(tid >= 1 for tid in track_ids), "Track IDs must start at >= 1"
+        assert track_ids == sorted(track_ids)
+        assert all(tid >= 1 for tid in track_ids)
 
-        # ----------------------------------------------------------------
-        # Assertions: timestamps span the full session
-        # ----------------------------------------------------------------
+        # Timestamps span full session for long-running tracks
         for tid, tdata in report["tracks"].items():
-            # Every track that was confirmed should have a meaningful age
             if tdata["state"] in ("confirmed", "expired", "lost"):
-                age_s = tdata["age_seconds"]
-                # Person A should span close to the full session
-                # (tolerance: allow 2 s slop for timing)
                 if tdata["hit_count"] > 100:
+                    age_s = tdata["age_seconds"]
                     assert age_s >= 5.0, (
-                        f"Track {tid} has {tdata['hit_count']} hits but age_seconds={age_s:.2f}; "
-                        "timestamps must span real elapsed time, not just 1 frame"
+                        f"Track {tid}: {tdata['hit_count']} hits but age_seconds={age_s:.2f}"
                     )
 
-        # ----------------------------------------------------------------
-        # Assertions: age_frames == hit_count for every track
-        # ----------------------------------------------------------------
+        # age_frames >= hit_count for every track (age_frames includes missed frames too)
         for tid, tdata in report["tracks"].items():
-            assert tdata["age_frames"] == tdata["hit_count"], (
-                f"Track {tid}: age_frames={tdata['age_frames']} != "
-                f"hit_count={tdata['hit_count']}"
+            assert tdata["age_frames"] >= tdata["hit_count"], (
+                f"Track {tid}: age_frames={tdata['age_frames']} < hit_count={tdata['hit_count']}"
             )
+            # For Person A (600 hits), age_frames should equal hit_count (always matched)
+            if tdata["hit_count"] == 600:
+                assert tdata["age_frames"] == 600, \
+                    f"Track {tid}: always-matched track should have age_frames==600"
+
+        # JSON report includes required depth stats
+        assert "total_depth_valid_detections" in report
+        assert "total_depth_invalid_detections" in report
+        assert "peak_concurrent_tracks" in report
 
         print(f"\n60-second tracking report:\n{json.dumps(report, indent=2, default=str)}")
 
     def test_depth_dropout_does_not_make_valid(self):
-        """
-        During sensor dropout (all-zero depth), distance_valid must be False
-        for every tracked person in that frame.
-        """
-        from aerosentinel.perception.person_tracker import TrackState
+        """During sensor dropout, distance_valid must be False."""
+        tracker, fusion = _tracker_and_fusion()
 
-        tracker, fusion = self._make_tracker_and_fusion()
-
-        # Warm up — 10 valid frames to confirm a track
         for _ in range(10):
             dets = [_det(cx=320, cy=240)]
             fused = fusion.fuse(dets, _depth_valid(dist_m=5.0))
             tracker.update(fused)
 
-        # Now feed zero-depth frames
         for _ in range(3):
             dets = [_det(cx=320, cy=240)]
             fused = fusion.fuse(dets, _depth_zero())
             confirmed = tracker.update(fused)
-
             for track in confirmed:
-                assert track.distance_valid is False, (
-                    f"Track {track.track_id}: distance_valid=True during zero-depth frame; "
-                    "depth dropout must not be reported as valid"
-                )
-                assert track.estimated_distance_m is None, (
-                    f"Track {track.track_id}: estimated_distance_m={track.estimated_distance_m} "
-                    "during zero-depth; EMA must not persist as valid"
-                )
-                assert track.valid_depth_percent == 0.0 or track.depth_method == "invalid", (
-                    f"Track {track.track_id}: valid_depth_percent={track.valid_depth_percent} "
-                    "with depth_method={track.depth_method} during dropout"
-                )
+                assert track.distance_valid is False
+                assert track.estimated_distance_m is None
+                assert track.valid_depth_percent == 0.0 or track.depth_method == "invalid"
 
     def test_sparse_depth_below_threshold_is_invalid(self):
-        """
-        When valid depth coverage is below min_valid_depth_pct (5 %),
-        distance_valid must be False even if a numeric distance was computed.
-        """
-        tracker, fusion = self._make_tracker_and_fusion()
-
-        depth_sparse = _depth_sparse(dist_m=4.0, pct=1.5)  # only 1.5% valid — below 5%
+        """Coverage < 5% threshold → distance_valid=False."""
+        tracker, fusion = _tracker_and_fusion()
+        depth_sparse = _depth_sparse(dist_m=4.0, pct=1.5)
 
         for _ in range(10):
             dets = [_det(cx=320, cy=240)]
             fused = fusion.fuse(dets, depth_sparse)
             confirmed = tracker.update(fused)
             for track in confirmed:
-                assert track.distance_valid is False, (
-                    f"Track {track.track_id}: distance_valid=True with sparse depth; "
-                    f"valid_depth_percent={track.valid_depth_percent:.1f}% < 5% threshold"
-                )
+                assert track.distance_valid is False
 
     def test_valid_depth_reported_correctly(self):
-        """
-        When depth is fully valid, distance_valid=True, estimated_distance_m is
-        finite and positive, valid_depth_percent > 0.
-        """
-        tracker, fusion = self._make_tracker_and_fusion()
+        """Full valid depth → distance_valid=True, nonzero coverage."""
+        tracker, fusion = _tracker_and_fusion()
 
+        confirmed = []
         for _ in range(10):
             dets = [_det(cx=320, cy=240)]
             fused = fusion.fuse(dets, _depth_valid(dist_m=3.5))
             confirmed = tracker.update(fused)
 
-        assert len(confirmed) >= 1, "Should have at least one confirmed track"
+        assert len(confirmed) >= 1
         for track in confirmed:
-            assert track.distance_valid is True, \
-                f"Track {track.track_id}: distance_valid=False with full valid depth"
+            assert track.distance_valid is True
             assert track.estimated_distance_m is not None
             assert math.isfinite(track.estimated_distance_m)
             assert track.estimated_distance_m > 0
             assert track.valid_depth_percent > 0.0
 
     def test_valid_depth_percent_never_zero_when_distance_valid_true(self):
-        """
-        Invariant: distance_valid=True implies valid_depth_percent > 0.
-        Run 300 mixed frames and verify invariant holds for every update.
-        """
-        tracker, fusion = self._make_tracker_and_fusion()
+        """Invariant: distance_valid=True implies valid_depth_percent > 0."""
+        tracker, fusion = _tracker_and_fusion()
         rng = np.random.default_rng(42)
 
         for frame_idx in range(300):
             dets = [_det()]
-            if rng.random() < 0.5:
-                depth = _depth_valid(dist_m=rng.uniform(1.0, 8.0))
-            else:
-                depth = _depth_zero()
-
+            depth = _depth_valid(dist_m=rng.uniform(1.0, 8.0)) if rng.random() < 0.5 else _depth_zero()
             fused = fusion.fuse(dets, depth)
             confirmed = tracker.update(fused)
-
             for track in confirmed:
                 if track.distance_valid:
-                    assert track.valid_depth_percent > 0.0, (
-                        f"Frame {frame_idx}, Track {track.track_id}: "
-                        f"distance_valid=True but valid_depth_percent=0.0 — INCONSISTENT"
-                    )
+                    assert track.valid_depth_percent > 0.0
                     assert track.estimated_distance_m is not None
                     assert math.isfinite(track.estimated_distance_m)
                     assert track.estimated_distance_m > 0.0
 
 
 # ---------------------------------------------------------------------------
-# Unit tests for FusedDetection consistency invariant
+# Requirement 1: Valid distance with nonzero valid-depth percentage
 # ---------------------------------------------------------------------------
 
-class TestFusedDetectionInvariant:
-    def test_distance_valid_false_when_zero_coverage(self):
-        """
-        FusedDetection with valid_depth_percent=0.0 must have
-        distance_valid=False, even if distance_m is set.
-        """
-        from aerosentinel.perception.inference_engine import Detection
-        from aerosentinel.perception.rgbd_fusion import FusedDetection
-
-        det = Detection(0, "person", 0.9, (100, 100, 300, 300), time.time())
-        fd = FusedDetection(
-            detection=det,
-            distance_m=4.0,
-            distance_valid=True,     # attempt to set True with 0% coverage
-            depth_method="median",
-            valid_depth_percent=0.0,  # <- forbidden combination
-        )
-        # __post_init__ must correct this
-        assert fd.distance_valid is False, (
-            "FusedDetection.__post_init__ must force distance_valid=False "
-            "when valid_depth_percent=0.0"
-        )
-        assert fd.depth_method == "invalid"
-
-    def test_distance_valid_false_when_distance_none(self):
-        from aerosentinel.perception.inference_engine import Detection
-        from aerosentinel.perception.rgbd_fusion import FusedDetection
-
-        det = Detection(0, "person", 0.9, (100, 100, 300, 300), time.time())
-        fd = FusedDetection(
-            detection=det,
-            distance_m=None,
-            distance_valid=True,     # invalid: distance_m is None
-            depth_method="center",
-            valid_depth_percent=80.0,
-        )
-        assert fd.distance_valid is False
-
-    def test_distance_valid_false_when_distance_nan(self):
-        from aerosentinel.perception.inference_engine import Detection
-        from aerosentinel.perception.rgbd_fusion import FusedDetection
-
-        det = Detection(0, "person", 0.9, (100, 100, 300, 300), time.time())
-        fd = FusedDetection(
-            detection=det,
-            distance_m=float("nan"),
-            distance_valid=True,
-            depth_method="center",
-            valid_depth_percent=80.0,
-        )
-        assert fd.distance_valid is False
-
-    def test_to_dict_includes_valid_depth_percent(self):
-        from aerosentinel.perception.inference_engine import Detection
-        from aerosentinel.perception.rgbd_fusion import FusedDetection
-
-        det = Detection(0, "person", 0.9, (100, 100, 300, 300), time.time())
-        fd = FusedDetection(
-            detection=det,
-            distance_m=3.0,
-            distance_valid=True,
-            depth_method="center",
-            valid_depth_percent=92.5,
-        )
-        d = fd.to_dict()
-        assert "valid_depth_percent" in d
-        assert d["valid_depth_percent"] == pytest.approx(92.5, abs=0.01)
-        assert d["distance_valid"] is True
-
-
-# ---------------------------------------------------------------------------
-# Unit tests for TrackedPerson depth propagation
-# ---------------------------------------------------------------------------
-
-class TestTrackedPersonDepthPropagation:
+class TestReq1_ValidDistanceNonzeroDepth:
     @pytest.fixture(autouse=True)
     def _reset_id(self):
         import aerosentinel.perception.person_tracker as _pt
         _pt._NEXT_TRACK_ID = 1
 
-    def _make_fd(
-        self,
-        dist_m: Optional[float],
-        valid: bool,
-        pct: float,
-        method: str = "center",
-    ) -> "FusedDetection":
-        from aerosentinel.perception.inference_engine import Detection
-        from aerosentinel.perception.rgbd_fusion import FusedDetection
-
-        det = Detection(0, "person", 0.9, (100, 100, 300, 300), time.time())
-        return FusedDetection(
-            detection=det,
-            distance_m=dist_m,
-            distance_valid=valid,
-            depth_method=method,
-            valid_depth_percent=pct,
-        )
-
-    def test_valid_depth_propagated(self):
+    def test_valid_distance_has_nonzero_coverage(self):
         from aerosentinel.perception.person_tracker import TrackedPerson
-
         track = TrackedPerson(track_id=1)
-        fd = self._make_fd(dist_m=5.0, valid=True, pct=85.0, method="center")
+        fd = _make_fd(dist_m=4.5, valid=True, pct=78.0, method="center")
         track.update_from_fused(fd)
 
+        assert track.distance_valid is True
+        assert track.valid_depth_percent == pytest.approx(78.0, abs=0.01)
+        assert track.estimated_distance_m == pytest.approx(4.5, abs=0.1)
+        assert track.depth_method == "center"
+
+    def test_fused_detection_valid_distance_nonzero_pct(self):
+        from aerosentinel.perception.inference_engine import Detection
+        from aerosentinel.perception.rgbd_fusion import FusedDetection
+        det = Detection(0, "person", 0.9, (100, 100, 300, 300), time.time())
+        fd = FusedDetection(detection=det, distance_m=3.0, distance_valid=True,
+                            depth_method="center", valid_depth_percent=92.5)
+        assert fd.distance_valid is True
+        assert fd.valid_depth_percent > 0.0
+        d = fd.to_dict()
+        assert d["valid_depth_percent"] == pytest.approx(92.5, abs=0.01)
+
+
+# ---------------------------------------------------------------------------
+# Requirement 2: Invalid depth with zero valid-depth percentage
+# ---------------------------------------------------------------------------
+
+class TestReq2_InvalidDepthZeroCoverage:
+    @pytest.fixture(autouse=True)
+    def _reset_id(self):
+        import aerosentinel.perception.person_tracker as _pt
+        _pt._NEXT_TRACK_ID = 1
+
+    def test_zero_coverage_forces_invalid(self):
+        from aerosentinel.perception.inference_engine import Detection
+        from aerosentinel.perception.rgbd_fusion import FusedDetection
+        det = Detection(0, "person", 0.9, (100, 100, 300, 300), time.time())
+        fd = FusedDetection(detection=det, distance_m=4.0, distance_valid=True,
+                            depth_method="median", valid_depth_percent=0.0)
+        assert fd.distance_valid is False
+        assert fd.depth_method == "invalid"
+
+    def test_zero_coverage_propagates_to_track(self):
+        from aerosentinel.perception.person_tracker import TrackedPerson
+        track = TrackedPerson(track_id=1)
+        fd = _make_fd(dist_m=None, valid=False, pct=0.0, method="invalid")
+        track.update_from_fused(fd)
+        assert track.distance_valid is False
+        assert track.valid_depth_percent == 0.0
+        assert track.estimated_distance_m is None
+
+    def test_rgbd_fusion_zero_depth_gives_zero_percent(self):
+        from aerosentinel.perception.inference_engine import Detection
+        from aerosentinel.perception.rgbd_fusion import RGBDFusion
+        fusion = RGBDFusion(min_valid_depth_pct=5.0)
+        det = Detection(0, "person", 0.9, (100, 100, 300, 300), time.time())
+        result = fusion.fuse([det], np.zeros((480, 640), dtype=np.float32))
+        fd = result[0]
+        assert fd.valid_depth_percent == pytest.approx(0.0, abs=0.01)
+        assert fd.distance_valid is False
+        assert fd.depth_method == "invalid"
+
+
+# ---------------------------------------------------------------------------
+# Requirement 3: Stale distance preserved as last_known_distance_m
+# ---------------------------------------------------------------------------
+
+class TestReq3_StaleDistancePreserved:
+    @pytest.fixture(autouse=True)
+    def _reset_id(self):
+        import aerosentinel.perception.person_tracker as _pt
+        _pt._NEXT_TRACK_ID = 1
+
+    def test_last_known_distance_preserved_after_invalid_frame(self):
+        """
+        After several valid frames, an invalid frame must:
+        - Set distance_valid=False and estimated_distance_m=None.
+        - Preserve last_known_distance_m as the previous valid reading.
+        """
+        from aerosentinel.perception.person_tracker import TrackedPerson
+        track = TrackedPerson(track_id=1, _ema_alpha=0.7)
+
+        for _ in range(5):
+            fd = _make_fd(dist_m=4.0, valid=True, pct=90.0)
+            track.update_from_fused(fd)
+
+        last_valid = track.estimated_distance_m
+        assert last_valid is not None and last_valid > 0
+
+        fd_invalid = _make_fd(dist_m=None, valid=False, pct=0.0, method="invalid")
+        track.update_from_fused(fd_invalid)
+
+        assert track.distance_valid is False
+        assert track.estimated_distance_m is None, "EMA must not persist as valid"
+        assert track.last_known_distance_m is not None, "last_known_distance_m must be preserved"
+        assert track.last_known_distance_m == pytest.approx(last_valid, abs=0.001)
+
+    def test_last_known_distance_preserved_after_mark_missed(self):
+        from aerosentinel.perception.person_tracker import TrackedPerson
+        track = TrackedPerson(track_id=1)
+
+        fd = _make_fd(dist_m=3.0, valid=True, pct=70.0)
+        track.update_from_fused(fd)
+        last_valid = track.last_known_distance_m
+        assert last_valid is not None
+
+        track.mark_missed()
+
+        assert track.distance_valid is False
+        assert track.estimated_distance_m is None
+        assert track.last_known_distance_m == pytest.approx(last_valid, abs=0.001)
+
+    def test_last_known_distance_in_to_dict(self):
+        from aerosentinel.perception.person_tracker import TrackedPerson
+        track = TrackedPerson(track_id=1)
+        fd = _make_fd(dist_m=5.5, valid=True, pct=80.0)
+        track.update_from_fused(fd)
+        fd_inv = _make_fd(dist_m=None, valid=False, pct=0.0, method="invalid")
+        track.update_from_fused(fd_inv)
+
+        d = track.to_dict()
+        assert "last_known_distance_m" in d
+        assert d["last_known_distance_m"] is not None
+        assert d["distance_valid"] is False
+        assert d["estimated_distance_m"] is None
+
+
+# ---------------------------------------------------------------------------
+# Requirement 4: Correct depth metadata propagation
+# ---------------------------------------------------------------------------
+
+class TestReq4_DepthMetadataPropagation:
+    @pytest.fixture(autouse=True)
+    def _reset_id(self):
+        import aerosentinel.perception.person_tracker as _pt
+        _pt._NEXT_TRACK_ID = 1
+
+    def test_valid_depth_propagated_fully(self):
+        from aerosentinel.perception.person_tracker import TrackedPerson
+        track = TrackedPerson(track_id=1)
+        fd = _make_fd(dist_m=5.0, valid=True, pct=85.0, method="center")
+        track.update_from_fused(fd)
         assert track.distance_valid is True
         assert track.estimated_distance_m == pytest.approx(5.0, abs=0.01)
         assert track.valid_depth_percent == pytest.approx(85.0, abs=0.01)
         assert track.depth_method == "center"
 
     def test_invalid_depth_does_not_persist_ema(self):
-        """
-        After several valid frames, an invalid frame must reset distance to None.
-        EMA must NOT carry forward as valid distance.
-        """
         from aerosentinel.perception.person_tracker import TrackedPerson
-
         track = TrackedPerson(track_id=1)
-
-        # 5 valid frames — build up EMA
         for _ in range(5):
-            fd = self._make_fd(dist_m=4.0, valid=True, pct=90.0)
-            track.update_from_fused(fd)
-
+            track.update_from_fused(_make_fd(dist_m=4.0, valid=True, pct=90.0))
         assert track.distance_valid is True
-        assert track.estimated_distance_m is not None
 
-        # One invalid frame
-        fd_invalid = self._make_fd(dist_m=None, valid=False, pct=0.0, method="invalid")
-        track.update_from_fused(fd_invalid)
-
-        assert track.distance_valid is False, \
-            "After invalid frame, distance_valid must be False"
-        assert track.estimated_distance_m is None, \
-            "EMA must not persist as valid after invalid depth frame"
+        track.update_from_fused(_make_fd(dist_m=None, valid=False, pct=0.0, method="invalid"))
+        assert track.distance_valid is False
+        assert track.estimated_distance_m is None
         assert track.valid_depth_percent == 0.0
 
-    def test_mark_missed_resets_depth(self):
+    def test_mark_missed_resets_current_depth(self):
         from aerosentinel.perception.person_tracker import TrackedPerson
-
         track = TrackedPerson(track_id=1)
-        fd = self._make_fd(dist_m=3.0, valid=True, pct=70.0)
-        track.update_from_fused(fd)
+        track.update_from_fused(_make_fd(dist_m=3.0, valid=True, pct=70.0))
         assert track.distance_valid is True
-
         track.mark_missed()
-
         assert track.distance_valid is False
         assert track.estimated_distance_m is None
         assert track.valid_depth_percent == 0.0
         assert track.depth_method == "invalid"
 
-    def test_age_frames_equals_hit_count(self):
+    def test_depth_method_propagated_correctly(self):
         from aerosentinel.perception.person_tracker import TrackedPerson
-
         track = TrackedPerson(track_id=1)
-        for i in range(7):
-            fd = self._make_fd(dist_m=2.0 + i * 0.1, valid=True, pct=80.0)
-            track.update_from_fused(fd)
-
-        assert track.age_frames == 7
-        assert track.hit_count == 7
-
-    def test_timestamps_span_multiple_seconds(self):
-        """first_seen_ts and last_seen_ts must reflect real wall-clock time."""
-        from aerosentinel.perception.person_tracker import TrackedPerson
-
-        track = TrackedPerson(track_id=1)
-        t_before = time.time()
-
-        fd1 = self._make_fd(dist_m=4.0, valid=True, pct=80.0)
-        track.update_from_fused(fd1)
-        first = track.first_seen_ts
-
-        time.sleep(0.05)  # 50 ms
-
-        fd2 = self._make_fd(dist_m=4.1, valid=True, pct=80.0)
-        track.update_from_fused(fd2)
-        last = track.last_seen_ts
-
-        assert last > first, "last_seen_ts must be after first_seen_ts"
-        assert last - first >= 0.03, \
-            f"Timestamps must span real elapsed time; got {last - first:.4f}s"
+        track.update_from_fused(_make_fd(dist_m=2.5, valid=True, pct=60.0, method="median"))
+        assert track.depth_method == "median"
 
 
 # ---------------------------------------------------------------------------
-# Unit tests for PersonTracker lifecycle
+# Requirement 5: Track age_frames across hit AND missed updates
 # ---------------------------------------------------------------------------
 
-class TestPersonTrackerLifecycle:
+class TestReq5_AgeFrames:
     @pytest.fixture(autouse=True)
     def _reset_id(self):
         import aerosentinel.perception.person_tracker as _pt
         _pt._NEXT_TRACK_ID = 1
 
-    def _fuse(self, cx: int, dist_m: float, valid_pct: float = 95.0) -> "FusedDetection":
-        from aerosentinel.perception.inference_engine import Detection
-        from aerosentinel.perception.rgbd_fusion import FusedDetection
+    def test_age_frames_increments_on_hit(self):
+        from aerosentinel.perception.person_tracker import TrackedPerson
+        track = TrackedPerson(track_id=1)
+        for i in range(5):
+            track.update_from_fused(_make_fd(dist_m=2.0, valid=True, pct=80.0))
+        assert track.age_frames == 5
+        assert track.hit_count == 5
 
-        half = 50
-        det = Detection(0, "person", 0.9, (cx - half, 190, cx + half, 290), time.time())
-        fd = FusedDetection(
-            detection=det,
-            distance_m=dist_m if valid_pct > 5.0 else None,
-            distance_valid=valid_pct > 5.0,
-            depth_method="center" if valid_pct > 5.0 else "invalid",
-            valid_depth_percent=valid_pct,
-        )
-        return fd
+    def test_age_frames_increments_on_miss(self):
+        """age_frames must grow on missed frames too; hit_count must not."""
+        from aerosentinel.perception.person_tracker import TrackedPerson
+        track = TrackedPerson(track_id=1)
+        track.update_from_fused(_make_fd(dist_m=2.0, valid=True, pct=80.0))
+        for _ in range(3):
+            track.mark_missed()
+        assert track.age_frames == 4   # 1 hit + 3 missed
+        assert track.hit_count == 1
+        assert track.missed_frames == 3
+        assert track.total_missed == 3
 
-    def test_track_created_and_confirmed(self):
+    def test_age_frames_via_tracker_update(self):
+        """
+        Run tracker for 10 frames with a detection present every frame,
+        then 5 frames without. age_frames should equal 15 total.
+        """
+        from aerosentinel.perception.person_tracker import PersonTracker
+        tracker = PersonTracker(min_hits=3, max_missed=20)
+        t0 = time.time()
+
+        for i in range(10):
+            fd = _make_fd(dist_m=4.0, valid=True, pct=80.0)
+            tracker.update([fd], ts=t0 + i * 0.1)
+
+        for i in range(5):
+            tracker.update([], ts=t0 + (10 + i) * 0.1)
+
+        all_t = tracker.all_tracks()
+        assert len(all_t) == 1
+        track = all_t[0]
+        assert track.age_frames == 15
+        assert track.hit_count == 10
+        assert track.missed_frames == 5
+        assert track.total_missed == 5
+
+    def test_age_frames_ge_hit_count_always(self):
+        """age_frames >= hit_count is an invariant."""
+        from aerosentinel.perception.person_tracker import PersonTracker
+        tracker = PersonTracker(min_hits=2, max_missed=10)
+        t0 = time.time()
+        rng = np.random.default_rng(7)
+        for i in range(50):
+            has_det = rng.random() > 0.3
+            fds = [_make_fd(dist_m=3.0, valid=True, pct=70.0)] if has_det else []
+            tracker.update(fds, ts=t0 + i * 0.1)
+
+        for t in tracker.all_tracks():
+            assert t.age_frames >= t.hit_count, \
+                f"Track {t.track_id}: age_frames={t.age_frames} < hit_count={t.hit_count}"
+
+
+# ---------------------------------------------------------------------------
+# Requirement 6: First-seen and last-seen timestamps
+# ---------------------------------------------------------------------------
+
+class TestReq6_Timestamps:
+    @pytest.fixture(autouse=True)
+    def _reset_id(self):
+        import aerosentinel.perception.person_tracker as _pt
+        _pt._NEXT_TRACK_ID = 1
+
+    def test_timestamps_span_real_elapsed_time(self):
+        from aerosentinel.perception.person_tracker import TrackedPerson
+        track = TrackedPerson(track_id=1)
+        track.update_from_fused(_make_fd(dist_m=4.0, valid=True, pct=80.0))
+        first = track.first_seen_ts
+        time.sleep(0.05)
+        track.update_from_fused(_make_fd(dist_m=4.1, valid=True, pct=80.0))
+        last = track.last_seen_ts
+        assert last > first
+        assert last - first >= 0.03
+
+    def test_injected_timestamps_respected(self):
+        from aerosentinel.perception.person_tracker import PersonTracker
+        tracker = PersonTracker(min_hits=1)
+        t0 = 1_000_000.0
+        fd = _make_fd(dist_m=3.0, valid=True, pct=80.0)
+        tracker.update([fd], ts=t0)
+
+        t_later = t0 + 60.0
+        fd2 = _make_fd(dist_m=3.1, valid=True, pct=80.0)
+        tracker.update([fd2], ts=t_later)
+
+        track = tracker.all_tracks()[0]
+        assert track.first_seen_ts == pytest.approx(t0, abs=0.001)
+        assert track.last_seen_ts == pytest.approx(t_later, abs=0.001)
+        assert track.track_duration_s() == pytest.approx(60.0, abs=0.01)
+
+    def test_last_seen_ts_updates_on_hit_only(self):
+        """last_seen_ts must NOT advance on a missed frame."""
+        from aerosentinel.perception.person_tracker import PersonTracker
+        tracker = PersonTracker(min_hits=1, max_missed=20)
+        t0 = 2_000_000.0
+        fd = _make_fd(dist_m=3.0, valid=True, pct=80.0)
+        tracker.update([fd], ts=t0)
+        track = tracker.all_tracks()[0]
+        ts_after_hit = track.last_seen_ts
+
+        for i in range(5):
+            tracker.update([], ts=t0 + (i + 1) * 0.1)
+
+        assert track.last_seen_ts == pytest.approx(ts_after_hit, abs=0.001), \
+            "last_seen_ts must not advance during missed frames"
+
+
+# ---------------------------------------------------------------------------
+# Requirement 7: Track creation and confirmation
+# ---------------------------------------------------------------------------
+
+class TestReq7_CreationConfirmation:
+    @pytest.fixture(autouse=True)
+    def _reset_id(self):
+        import aerosentinel.perception.person_tracker as _pt
+        _pt._NEXT_TRACK_ID = 1
+
+    def test_track_starts_tentative(self):
         from aerosentinel.perception.person_tracker import PersonTracker, TrackState
+        tracker = PersonTracker(min_hits=3)
+        fd = _make_fd(dist_m=4.0, valid=True, pct=80.0)
+        tracker.update([fd])
+        track = tracker.all_tracks()[0]
+        assert track.state == TrackState.TENTATIVE
 
-        tracker = PersonTracker(min_hits=3, max_missed=5)
+    def test_track_confirmed_after_min_hits(self):
+        from aerosentinel.perception.person_tracker import PersonTracker, TrackState
+        tracker = PersonTracker(min_hits=3)
         for _ in range(5):
-            confirmed = tracker.update([self._fuse(cx=320, dist_m=4.0)])
-        assert len(confirmed) >= 1
-        assert confirmed[0].state == TrackState.CONFIRMED
+            fd = _make_fd(dist_m=4.0, valid=True, pct=80.0)
+            tracker.update([fd])
+        confirmed = [t for t in tracker.all_tracks() if t.state == TrackState.CONFIRMED]
+        assert len(confirmed) == 1
+        assert tracker.total_confirmed == 1
+
+    def test_lifecycle_created_event_recorded(self):
+        from aerosentinel.perception.person_tracker import PersonTracker, LifecycleEvent
+        tracker = PersonTracker(min_hits=3)
+        fd = _make_fd(dist_m=4.0, valid=True, pct=80.0)
+        tracker.update([fd])
+        track = tracker.all_tracks()[0]
+        events = [e for _, e, _ in track.lifecycle]
+        assert LifecycleEvent.CREATED in events
+
+    def test_lifecycle_confirmed_event_recorded(self):
+        from aerosentinel.perception.person_tracker import PersonTracker, LifecycleEvent
+        tracker = PersonTracker(min_hits=3)
+        for _ in range(5):
+            fd = _make_fd(dist_m=4.0, valid=True, pct=80.0)
+            tracker.update([fd])
+        track = tracker.all_tracks()[0]
+        events = [e for _, e, _ in track.lifecycle]
+        assert LifecycleEvent.CONFIRMED in events
+
+
+# ---------------------------------------------------------------------------
+# Requirement 8: Temporary detection loss
+# ---------------------------------------------------------------------------
+
+class TestReq8_TemporaryLoss:
+    @pytest.fixture(autouse=True)
+    def _reset_id(self):
+        import aerosentinel.perception.person_tracker as _pt
+        _pt._NEXT_TRACK_ID = 1
 
     def test_track_lost_after_max_missed(self):
         from aerosentinel.perception.person_tracker import PersonTracker, TrackState
-
         tracker = PersonTracker(min_hits=3, max_missed=3)
-        # Confirm track
         for _ in range(5):
-            tracker.update([self._fuse(cx=320, dist_m=4.0)])
-        # Feed empty frames
+            tracker.update([_make_fd(dist_m=4.0, valid=True, pct=80.0)])
         for _ in range(4):
             tracker.update([])
-
-        all_tracks = tracker.all_tracks()
-        lost = [t for t in all_tracks if t.state == TrackState.LOST]
+        lost = [t for t in tracker.all_tracks() if t.state == TrackState.LOST]
         assert len(lost) >= 1
         assert tracker.total_lost >= 1
 
-    def test_monotonic_track_ids(self):
-        from aerosentinel.perception.person_tracker import PersonTracker
+    def test_depth_invalid_during_loss(self):
+        """When a track is LOST, its depth fields are invalid."""
+        from aerosentinel.perception.person_tracker import PersonTracker, TrackState
+        tracker = PersonTracker(min_hits=3, max_missed=3)
+        for _ in range(5):
+            tracker.update([_make_fd(dist_m=4.0, valid=True, pct=80.0)])
+        for _ in range(4):
+            tracker.update([])
+        for track in tracker.all_tracks():
+            if track.state == TrackState.LOST:
+                assert track.distance_valid is False
+                assert track.estimated_distance_m is None
 
-        tracker = PersonTracker(min_hits=2)
-        for frame in range(30):
-            dets = [self._fuse(cx=320, dist_m=4.0)]
-            if frame > 15:
-                dets.append(self._fuse(cx=160, dist_m=3.0))
-            tracker.update(dets)
+    def test_lost_event_in_lifecycle(self):
+        from aerosentinel.perception.person_tracker import PersonTracker, TrackState, LifecycleEvent
+        tracker = PersonTracker(min_hits=3, max_missed=3)
+        for _ in range(5):
+            tracker.update([_make_fd(dist_m=4.0, valid=True, pct=80.0)])
+        for _ in range(4):
+            tracker.update([])
+        for track in tracker.all_tracks():
+            if track.state == TrackState.LOST:
+                events = [e for _, e, _ in track.lifecycle]
+                assert LifecycleEvent.LOST in events
+
+
+# ---------------------------------------------------------------------------
+# Requirement 9: Reacquisition using the original track ID
+# ---------------------------------------------------------------------------
+
+class TestReq9_Reacquisition:
+    @pytest.fixture(autouse=True)
+    def _reset_id(self):
+        import aerosentinel.perception.person_tracker as _pt
+        _pt._NEXT_TRACK_ID = 1
+
+    def test_same_track_id_after_reacquisition(self):
+        from aerosentinel.perception.person_tracker import PersonTracker, TrackState
+        tracker = PersonTracker(min_hits=3, max_missed=3, max_expired_age_s=60.0)
+        # Confirm
+        for _ in range(5):
+            tracker.update([_make_fd(dist_m=4.0, valid=True, pct=80.0)])
+        original_id = tracker.all_tracks()[0].track_id
+
+        # Lose
+        for _ in range(4):
+            tracker.update([])
+
+        # Reacquire — same bbox position
+        for _ in range(3):
+            tracker.update([_make_fd(dist_m=4.0, valid=True, pct=80.0)])
+
+        all_t = tracker.all_tracks()
+        # The original track should have been reacquired (same id)
+        ids = [t.track_id for t in all_t]
+        assert original_id in ids, "Original track ID must be preserved on reacquisition"
+        assert tracker.total_reacquired >= 1
+
+    def test_reacquired_event_in_lifecycle(self):
+        from aerosentinel.perception.person_tracker import PersonTracker, LifecycleEvent
+        tracker = PersonTracker(min_hits=3, max_missed=3, max_expired_age_s=60.0)
+        for _ in range(5):
+            tracker.update([_make_fd(dist_m=4.0, valid=True, pct=80.0)])
+        for _ in range(4):
+            tracker.update([])
+        for _ in range(3):
+            tracker.update([_make_fd(dist_m=4.0, valid=True, pct=80.0)])
+
+        for track in tracker.all_tracks():
+            events = [e for _, e, _ in track.lifecycle]
+            if LifecycleEvent.REACQUIRED in events:
+                return  # Pass: reacquisition event found
+        pytest.fail("REACQUIRED lifecycle event not recorded")
+
+
+# ---------------------------------------------------------------------------
+# Requirement 10: Track expiration
+# ---------------------------------------------------------------------------
+
+class TestReq10_Expiration:
+    @pytest.fixture(autouse=True)
+    def _reset_id(self):
+        import aerosentinel.perception.person_tracker as _pt
+        _pt._NEXT_TRACK_ID = 1
+
+    def test_track_expires_after_max_expired_age_s(self):
+        from aerosentinel.perception.person_tracker import PersonTracker, TrackState
+        tracker = PersonTracker(min_hits=3, max_missed=3, max_expired_age_s=5.0)
+        t0 = 3_000_000.0
+
+        for i in range(5):
+            tracker.update([_make_fd(dist_m=4.0, valid=True, pct=80.0)], ts=t0 + i * 0.1)
+
+        # Lose the track
+        for i in range(4):
+            tracker.update([], ts=t0 + 0.5 + i * 0.1)
+
+        # Advance time past max_expired_age_s
+        tracker.update([], ts=t0 + 20.0)
+
+        expired = [t for t in tracker.all_tracks() if t.state == TrackState.EXPIRED]
+        assert len(expired) >= 1
+        assert tracker.total_expired >= 1
+
+    def test_expired_event_in_lifecycle(self):
+        from aerosentinel.perception.person_tracker import PersonTracker, TrackState, LifecycleEvent
+        tracker = PersonTracker(min_hits=3, max_missed=3, max_expired_age_s=5.0)
+        t0 = 4_000_000.0
+        for i in range(5):
+            tracker.update([_make_fd(dist_m=4.0, valid=True, pct=80.0)], ts=t0 + i * 0.1)
+        for i in range(4):
+            tracker.update([], ts=t0 + 0.5 + i * 0.1)
+        tracker.update([], ts=t0 + 20.0)
+
+        for track in tracker.all_tracks():
+            if track.state == TrackState.EXPIRED:
+                events = [e for _, e, _ in track.lifecycle]
+                assert LifecycleEvent.EXPIRED in events
+                return
+        pytest.fail("EXPIRED lifecycle event not recorded")
+
+
+# ---------------------------------------------------------------------------
+# Requirement 11: Two-person tracking without ID duplication
+# ---------------------------------------------------------------------------
+
+class TestReq11_TwoPersonNoIDDuplicate:
+    @pytest.fixture(autouse=True)
+    def _reset_id(self):
+        import aerosentinel.perception.person_tracker as _pt
+        _pt._NEXT_TRACK_ID = 1
+
+    def test_two_persons_get_distinct_ids(self):
+        from aerosentinel.perception.person_tracker import PersonTracker
+        tracker = PersonTracker(min_hits=3, max_missed=10)
+        t0 = time.time()
+
+        for i in range(10):
+            fd_a = _make_fd(dist_m=4.0, valid=True, pct=80.0, cx=100, half=40)
+            fd_b = _make_fd(dist_m=5.0, valid=True, pct=80.0, cx=500, half=40)
+            tracker.update([fd_a, fd_b], ts=t0 + i * 0.1)
+
+        all_ids = [t.track_id for t in tracker.all_tracks()]
+        assert len(all_ids) == len(set(all_ids)), "Track IDs must be unique"
+        assert len(all_ids) == 2, "Should have exactly 2 distinct tracks"
+
+    def test_track_ids_monotonically_increasing(self):
+        from aerosentinel.perception.person_tracker import PersonTracker
+        tracker = PersonTracker(min_hits=2, max_missed=5)
+        t0 = time.time()
+
+        # Introduce first person, lose, introduce second, then both
+        for i in range(5):
+            tracker.update([_make_fd(dist_m=4.0, valid=True, pct=80.0, cx=100)], ts=t0 + i * 0.1)
+        for i in range(6):
+            tracker.update([], ts=t0 + (5 + i) * 0.1)
+        for i in range(5):
+            fd_a = _make_fd(dist_m=4.0, valid=True, pct=80.0, cx=100)
+            fd_b = _make_fd(dist_m=5.0, valid=True, pct=80.0, cx=500)
+            tracker.update([fd_a, fd_b], ts=t0 + (11 + i) * 0.1)
 
         ids = sorted(t.track_id for t in tracker.all_tracks())
         for i in range(1, len(ids)):
             assert ids[i] > ids[i - 1], "Track IDs must be strictly increasing"
 
+    def test_peak_concurrent_tracks(self):
+        from aerosentinel.perception.person_tracker import PersonTracker
+        tracker = PersonTracker(min_hits=1, max_missed=10)
+        t0 = time.time()
+        for i in range(5):
+            fd_a = _make_fd(dist_m=4.0, valid=True, pct=80.0, cx=100)
+            fd_b = _make_fd(dist_m=5.0, valid=True, pct=80.0, cx=500)
+            tracker.update([fd_a, fd_b], ts=t0 + i * 0.1)
+
+        assert tracker.peak_concurrent_tracks == 2
+
+
+# ---------------------------------------------------------------------------
+# Requirement 12: Accurate JSON lifecycle reporting
+# ---------------------------------------------------------------------------
+
+class TestReq12_JSONLifecycleReport:
+    @pytest.fixture(autouse=True)
+    def _reset_id(self):
+        import aerosentinel.perception.person_tracker as _pt
+        _pt._NEXT_TRACK_ID = 1
+
     def test_lifecycle_summary_json_serialisable(self):
         from aerosentinel.perception.person_tracker import PersonTracker
-
         tracker = PersonTracker()
         for _ in range(10):
-            tracker.update([self._fuse(cx=320, dist_m=4.0)])
-
+            tracker.update([_make_fd(dist_m=4.0, valid=True, pct=80.0)])
         summary = tracker.lifecycle_summary()
-        # Must be JSON serialisable
         json_str = json.dumps(summary, default=str)
         loaded = json.loads(json_str)
         assert "tracks" in loaded
         assert "total_update_calls" in loaded
         assert loaded["total_update_calls"] == 10
 
-    def test_reacquisition_counted(self):
+    def test_report_contains_required_depth_fields(self):
         from aerosentinel.perception.person_tracker import PersonTracker
+        tracker = PersonTracker()
+        for _ in range(5):
+            tracker.update([_make_fd(dist_m=4.0, valid=True, pct=80.0)])
+        summary = tracker.lifecycle_summary()
+        assert "total_depth_valid_detections" in summary
+        assert "total_depth_invalid_detections" in summary
+        assert "peak_concurrent_tracks" in summary
 
-        tracker = PersonTracker(min_hits=3, max_missed=3, max_expired_age_s=60.0)
-        # Confirm
-        for _ in range(5):
-            tracker.update([self._fuse(cx=320, dist_m=4.0)])
-        # Lose
-        for _ in range(5):
-            tracker.update([])
-        # Reacquire
-        for _ in range(5):
-            tracker.update([self._fuse(cx=320, dist_m=4.0)])
+    def test_per_track_dict_contains_all_required_fields(self):
+        from aerosentinel.perception.person_tracker import PersonTracker
+        tracker = PersonTracker(min_hits=1)
+        tracker.update([_make_fd(dist_m=4.0, valid=True, pct=80.0)])
+        track = tracker.all_tracks()[0]
+        d = track.to_dict()
+        required = [
+            "track_id", "state", "first_seen_ts", "last_seen_ts",
+            "age_seconds", "hit_count", "age_frames", "missed_frames",
+            "total_missed", "estimated_distance_m", "last_known_distance_m",
+            "distance_valid", "valid_depth_percent", "depth_method",
+            "latest_bbox", "lifecycle_events",
+        ]
+        for key in required:
+            assert key in d, f"Missing field in to_dict(): '{key}'"
 
-        assert tracker.total_reacquired >= 1
+    def test_lifecycle_history_per_track(self):
+        from aerosentinel.perception.person_tracker import PersonTracker
+        tracker = PersonTracker(min_hits=1)
+        tracker.update([_make_fd(dist_m=4.0, valid=True, pct=80.0)])
+        summary = tracker.lifecycle_summary()
+        for tid, tdata in summary["tracks"].items():
+            assert "lifecycle_history" in tdata
+            assert isinstance(tdata["lifecycle_history"], list)
+            # Each event must have ts, event, note keys
+            for entry in tdata["lifecycle_history"]:
+                assert "ts" in entry
+                assert "event" in entry
+                assert "note" in entry
+
+    def test_report_total_detections_counted(self):
+        from aerosentinel.perception.person_tracker import PersonTracker
+        tracker = PersonTracker()
+        for _ in range(7):
+            tracker.update([
+                _make_fd(dist_m=4.0, valid=True, pct=80.0, cx=100),
+                _make_fd(dist_m=5.0, valid=True, pct=80.0, cx=500),
+            ])
+        summary = tracker.lifecycle_summary()
+        assert summary["total_detections_processed"] == 14
+
+
+# ---------------------------------------------------------------------------
+# FusedDetection invariant tests
+# ---------------------------------------------------------------------------
+
+class TestFusedDetectionInvariant:
+    def test_distance_valid_false_when_zero_coverage(self):
+        from aerosentinel.perception.inference_engine import Detection
+        from aerosentinel.perception.rgbd_fusion import FusedDetection
+        det = Detection(0, "person", 0.9, (100, 100, 300, 300), time.time())
+        fd = FusedDetection(detection=det, distance_m=4.0, distance_valid=True,
+                            depth_method="median", valid_depth_percent=0.0)
+        assert fd.distance_valid is False
+        assert fd.depth_method == "invalid"
+
+    def test_distance_valid_false_when_distance_none(self):
+        from aerosentinel.perception.inference_engine import Detection
+        from aerosentinel.perception.rgbd_fusion import FusedDetection
+        det = Detection(0, "person", 0.9, (100, 100, 300, 300), time.time())
+        fd = FusedDetection(detection=det, distance_m=None, distance_valid=True,
+                            depth_method="center", valid_depth_percent=80.0)
+        assert fd.distance_valid is False
+
+    def test_distance_valid_false_when_distance_nan(self):
+        from aerosentinel.perception.inference_engine import Detection
+        from aerosentinel.perception.rgbd_fusion import FusedDetection
+        det = Detection(0, "person", 0.9, (100, 100, 300, 300), time.time())
+        fd = FusedDetection(detection=det, distance_m=float("nan"), distance_valid=True,
+                            depth_method="center", valid_depth_percent=80.0)
+        assert fd.distance_valid is False
+
+    def test_to_dict_includes_valid_depth_percent(self):
+        from aerosentinel.perception.inference_engine import Detection
+        from aerosentinel.perception.rgbd_fusion import FusedDetection
+        det = Detection(0, "person", 0.9, (100, 100, 300, 300), time.time())
+        fd = FusedDetection(detection=det, distance_m=3.0, distance_valid=True,
+                            depth_method="center", valid_depth_percent=92.5)
+        d = fd.to_dict()
+        assert "valid_depth_percent" in d
+        assert d["valid_depth_percent"] == pytest.approx(92.5, abs=0.01)
+        assert d["distance_valid"] is True
 
 
 # ---------------------------------------------------------------------------
@@ -596,11 +961,9 @@ class TestRGBDFusionValidDepthPercent:
     def test_full_zero_depth_gives_zero_percent(self):
         from aerosentinel.perception.inference_engine import Detection
         from aerosentinel.perception.rgbd_fusion import RGBDFusion
-
         fusion = RGBDFusion(min_valid_depth_pct=5.0)
         det = Detection(0, "person", 0.9, (100, 100, 300, 300), time.time())
         result = fusion.fuse([det], np.zeros((480, 640), dtype=np.float32))
-        assert len(result) == 1
         fd = result[0]
         assert fd.valid_depth_percent == pytest.approx(0.0, abs=0.01)
         assert fd.distance_valid is False
@@ -609,39 +972,28 @@ class TestRGBDFusionValidDepthPercent:
     def test_full_valid_depth_gives_nonzero_percent(self):
         from aerosentinel.perception.inference_engine import Detection
         from aerosentinel.perception.rgbd_fusion import RGBDFusion
-
         fusion = RGBDFusion(min_valid_depth_pct=5.0)
         det = Detection(0, "person", 0.9, (100, 100, 300, 300), time.time())
         depth = np.full((480, 640), 4.0, dtype=np.float32)
-        result = fusion.fuse([det], depth)
-        fd = result[0]
+        fd = fusion.fuse([det], depth)[0]
         assert fd.valid_depth_percent > 50.0
         assert fd.distance_valid is True
 
     def test_sparse_coverage_below_threshold_is_invalid(self):
         from aerosentinel.perception.inference_engine import Detection
         from aerosentinel.perception.rgbd_fusion import RGBDFusion
-
         fusion = RGBDFusion(min_valid_depth_pct=5.0)
         det = Detection(0, "person", 0.9, (100, 100, 300, 300), time.time())
-        # 1% valid pixels — below 5% threshold
         depth = _depth_sparse(dist_m=4.0, pct=1.0)
-        result = fusion.fuse([det], depth)
-        fd = result[0]
-        assert fd.distance_valid is False, (
-            f"Expected distance_valid=False for 1% coverage; "
-            f"got valid_depth_percent={fd.valid_depth_percent:.1f}% "
-            f"depth_method={fd.depth_method}"
-        )
+        fd = fusion.fuse([det], depth)[0]
+        assert fd.distance_valid is False
 
     def test_to_dict_includes_depth_method(self):
         from aerosentinel.perception.inference_engine import Detection
         from aerosentinel.perception.rgbd_fusion import RGBDFusion
-
         fusion = RGBDFusion()
         det = Detection(0, "person", 0.9, (100, 100, 300, 300), time.time())
         depth = np.full((480, 640), 4.0, dtype=np.float32)
         d = fusion.fuse([det], depth)[0].to_dict()
         assert "depth_method" in d
         assert "valid_depth_percent" in d
-

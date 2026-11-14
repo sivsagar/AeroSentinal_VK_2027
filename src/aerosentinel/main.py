@@ -67,6 +67,7 @@ _CONFIG_FILES = [
     "navigation.yaml",
     "mavlink.yaml",
     "mission.yaml",
+    "tracking.yaml",
 ]
 
 # ---------------------------------------------------------------------------
@@ -277,11 +278,11 @@ def _init_tracker(cfg: ConfigLoader) -> Optional[Any]:
         from aerosentinel.perception.person_tracker import PersonTracker
 
         tracker = PersonTracker(
-            iou_threshold=cfg.get("fusion.tracker_iou_threshold", 0.3),
-            min_hits=cfg.get("fusion.tracker_min_hits", 3),
-            max_missed=cfg.get("fusion.tracker_max_missed", 5),
-            max_expired_age_s=cfg.get("fusion.tracker_max_expired_age_s", 20.0),
-            ema_alpha=cfg.get("fusion.tracker_ema_alpha", 0.3),
+            iou_threshold=cfg.get("tracking.iou_threshold", 0.3),
+            min_hits=cfg.get("tracking.min_hits", 3),
+            max_missed=cfg.get("tracking.max_missed", 15),
+            max_expired_age_s=cfg.get("tracking.max_expired_age_s", 20.0),
+            ema_alpha=cfg.get("tracking.ema_alpha", 0.7),
         )
         logger.info("PersonTracker initialised.")
         return tracker

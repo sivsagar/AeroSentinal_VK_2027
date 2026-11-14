@@ -1,8 +1,8 @@
 # AeroSentinel — Development Status Tracker
 
 > **Updated:** 2026-11-14  
-> **Version:** 0.1.1  
-> **Automated Test Suite:** 189 passed, 0 failed (pytest 9.2.0)
+> **Version:** 0.1.2  
+> **Automated Test Suite:** 217 passed, 0 failed (pytest 9.2.0)
 
 ---
 

@@ -4,19 +4,26 @@ person_tracker.py — Multi-person tracking with depth metadata for AeroSentinel
 Design rules
 ------------
 * Monotonic, never-reused track IDs (global counter).
-* Track age_frames counts every ``update()`` call where the track received a
-  matched detection.  Missed frames do NOT increment age_frames.
-* first_seen_ts and last_seen_ts use ``time.time()`` (wall-clock) so that the
-  timestamps span the actual elapsed mission time.
+* age_frames increments on EVERY tracker update call (hit or miss), so it
+  correctly represents the total number of frames the track has been alive,
+  not just the number of matched detections.
+* hit_count counts only successful detection matches.
+* missed_frames counts consecutive frames without a match (resets on hit).
+* first_seen_ts and last_seen_ts use wall-clock / injected timestamps so
+  that elapsed time spans the actual mission duration.
 * valid_depth_percent is ALWAYS propagated directly from FusedDetection —
-  never stored as the EMA-smoothed distance's validity.
-* EMA distance smoothing is used ONLY when distance_valid=True on the new
-  measurement; a stale EMA value is NEVER reported as distance_valid=True when
-  the current measurement has distance_valid=False.
+  it reflects the CURRENT frame only and is never stale.
+* estimated_distance_m is the EMA-smoothed distance; set only when the
+  current frame passes depth validation.
+* last_known_distance_m preserves the most recent VALID distance for
+  display/logging even after depth becomes temporarily invalid.
+* EMA distance is updated ONLY when distance_valid=True on the new
+  measurement; a stale EMA value is NEVER reported as distance_valid=True
+  when the current measurement has distance_valid=False.
 * Track is CONFIRMED once hit_count >= min_hits.
 * Track is LOST once missed_frames > max_missed.
-* Lifecycle events (created, confirmed, lost, reacquired, expired) are recorded
-  per-track and aggregated globally.
+* Lifecycle events (created, confirmed, lost, reacquired, expired) are
+  recorded per-track and aggregated globally.
 
 Safety
 ------
@@ -93,12 +100,29 @@ class TrackedPerson:
     estimated_distance_m : Optional[float]
         EMA-smoothed distance — set only when current frame distance_valid=True.
         NEVER carries forward a previous valid EMA when current frame is invalid.
+    last_known_distance_m : Optional[float]
+        The most recent VALID distance observed for this track.
+        Preserved across invalid frames so the last good reading can be
+        displayed/logged without implying the current measurement is valid.
     distance_valid : bool
         Reflects the CURRENT frame's FusedDetection.distance_valid.
+        False when no detection matched (missed frame) or depth is invalid.
     valid_depth_percent : float
-        CURRENT frame's coverage percentage; never from a previous frame.
+        CURRENT frame's coverage percentage; never stale from a previous frame.
     depth_method : str
         CURRENT frame's depth_method.
+
+    Age / hit accounting
+    --------------------
+    age_frames : int
+        Incremented on EVERY tracker update (hit or miss) since track creation.
+        Represents the total frames this track has been alive in the tracker.
+    hit_count : int
+        Incremented only when a detection is successfully matched to this track.
+    missed_frames : int
+        Consecutive frames without a matched detection. Resets to 0 on a hit.
+    total_missed : int
+        Cumulative missed frames since track creation (never resets).
     """
 
     track_id: int
@@ -110,22 +134,24 @@ class TrackedPerson:
 
     # Hit / miss accounting
     hit_count: int = 0           # detections matched so far
-    age_frames: int = 0          # same as hit_count — frames with a match
-    missed_frames: int = 0       # consecutive frames without a match
+    age_frames: int = 0          # total tracker updates since creation
+    missed_frames: int = 0       # consecutive missed frames
+    total_missed: int = 0        # cumulative missed frames (never resets)
 
     # Latest detection
     latest_detection: Optional[Detection] = None
     latest_bbox: Optional[Tuple[int, int, int, int]] = None
 
-    # Depth metadata — ALWAYS from current frame
+    # Depth metadata — ALWAYS from current frame (or reset on miss)
     estimated_distance_m: Optional[float] = None
+    last_known_distance_m: Optional[float] = None   # last VALID reading
     distance_valid: bool = False
     valid_depth_percent: float = 0.0
     depth_method: str = "invalid"
 
     # EMA state (internal; not exposed as "valid" unless current frame is valid)
     _ema_distance: Optional[float] = field(default=None, repr=False)
-    _ema_alpha: float = field(default=0.3, repr=False)
+    _ema_alpha: float = field(default=0.7, repr=False)
 
     # Lifecycle history
     lifecycle: List[Tuple[float, LifecycleEvent, str]] = field(default_factory=list)
@@ -138,7 +164,7 @@ class TrackedPerson:
         self, fd: FusedDetection, ts: Optional[float] = None
     ) -> None:
         """
-        Update this track with a new FusedDetection.
+        Update this track with a new FusedDetection (matched frame).
 
         Parameters
         ----------
@@ -149,17 +175,19 @@ class TrackedPerson:
 
         Rules
         -----
-        * hit_count and age_frames both increment by 1.
+        * age_frames increments by 1 (also happens in mark_missed).
+        * hit_count increments by 1 (only on a detection match).
         * last_seen_ts is set to ``ts`` (or ``time.time()``).
         * missed_frames resets to 0.
         * valid_depth_percent, depth_method always taken from fd (current frame).
         * EMA distance updated ONLY when fd.distance_valid=True.
         * distance_valid reflects fd.distance_valid — never coerced to True.
+        * last_known_distance_m updated only when distance_valid=True.
         """
         was_lost = self.state == TrackState.LOST
 
-        self.hit_count += 1
         self.age_frames += 1
+        self.hit_count += 1
         self.missed_frames = 0
         self.last_seen_ts = ts if ts is not None else time.time()
         self.latest_detection = fd.detection
@@ -180,13 +208,15 @@ class TrackedPerson:
                     + (1.0 - self._ema_alpha) * self._ema_distance
                 )
             self.estimated_distance_m = self._ema_distance
+            self.last_known_distance_m = self._ema_distance   # preserve last valid
             self._record_event(
                 LifecycleEvent.DEPTH_VALID,
                 f"dist={fd.distance_m:.2f}m ema={self._ema_distance:.2f}m "
                 f"cov={fd.valid_depth_percent:.1f}%",
             )
         else:
-            # Current depth invalid — do NOT use EMA as valid distance
+            # Current depth invalid — do NOT use EMA as valid distance.
+            # last_known_distance_m is preserved for display purposes.
             self.estimated_distance_m = None
             self._record_event(
                 LifecycleEvent.DEPTH_INVALID,
@@ -196,14 +226,29 @@ class TrackedPerson:
         if was_lost:
             self._record_event(LifecycleEvent.REACQUIRED)
 
-    def mark_missed(self) -> None:
-        """Call when no detection matched this track in a frame."""
+    def mark_missed(self, ts: Optional[float] = None) -> None:
+        """
+        Call when no detection matched this track in a frame.
+
+        age_frames is incremented here too, so it reflects the total frames
+        the track has been alive (hit frames + missed frames).
+        Depth metadata is reset to invalid; last_known_distance_m is preserved.
+        """
+        self.age_frames += 1
         self.missed_frames += 1
-        # Depth becomes stale — reset to invalid
+        self.total_missed += 1
+
+        # Depth becomes stale for this frame — reset current-frame fields.
+        # last_known_distance_m intentionally NOT cleared (available for display).
         self.distance_valid = False
         self.estimated_distance_m = None
         self.valid_depth_percent = 0.0
         self.depth_method = "invalid"
+
+    def track_duration_s(self, now: Optional[float] = None) -> float:
+        """Wall-clock seconds from first_seen_ts to now (or last_seen_ts)."""
+        end = now if now is not None else self.last_seen_ts
+        return max(0.0, end - self.first_seen_ts)
 
     def to_dict(self) -> dict:
         return {
@@ -215,9 +260,14 @@ class TrackedPerson:
             "hit_count": self.hit_count,
             "age_frames": self.age_frames,
             "missed_frames": self.missed_frames,
+            "total_missed": self.total_missed,
             "estimated_distance_m": (
                 round(self.estimated_distance_m, 3)
                 if self.estimated_distance_m is not None else None
+            ),
+            "last_known_distance_m": (
+                round(self.last_known_distance_m, 3)
+                if self.last_known_distance_m is not None else None
             ),
             "distance_valid": self.distance_valid,
             "valid_depth_percent": round(self.valid_depth_percent, 2),
@@ -248,20 +298,20 @@ class PersonTracker:
     min_hits : int
         Number of consecutive detections required to confirm a track (default 3).
     max_missed : int
-        Maximum consecutive missed frames before marking track LOST (default 5).
+        Maximum consecutive missed frames before marking track LOST (default 15).
     max_expired_age_s : float
-        Seconds after LOST before a track is fully expired and removed (default 10.0).
+        Seconds after LOST before a track is fully expired and removed (default 20.0).
     ema_alpha : float
-        EMA smoothing factor for distance (default 0.3).  Higher = faster response.
+        EMA smoothing factor for distance (default 0.7).  Higher = faster response.
     """
 
     def __init__(
         self,
         iou_threshold: float = 0.3,
         min_hits: int = 3,
-        max_missed: int = 5,
-        max_expired_age_s: float = 10.0,
-        ema_alpha: float = 0.3,
+        max_missed: int = 15,
+        max_expired_age_s: float = 20.0,
+        ema_alpha: float = 0.7,
     ) -> None:
         self.iou_threshold = iou_threshold
         self.min_hits = min_hits
@@ -278,6 +328,12 @@ class PersonTracker:
         self.total_lost: int = 0
         self.total_reacquired: int = 0
         self.total_expired: int = 0
+
+        # Detection / depth statistics
+        self.total_detections: int = 0
+        self.total_depth_valid: int = 0
+        self.total_depth_invalid: int = 0
+        self.peak_concurrent_tracks: int = 0
 
     # ------------------------------------------------------------------
     # Public API
@@ -308,6 +364,13 @@ class PersonTracker:
         self._update_count += 1
         now = ts if ts is not None else time.time()
 
+        self.total_detections += len(fused_detections)
+        for fd in fused_detections:
+            if fd.distance_valid:
+                self.total_depth_valid += 1
+            else:
+                self.total_depth_invalid += 1
+
         active_tracks = [
             t for t in self._tracks.values()
             if t.state in (TrackState.TENTATIVE, TrackState.CONFIRMED, TrackState.LOST)
@@ -326,12 +389,16 @@ class PersonTracker:
             track = self._tracks[tid]
             fd = fused_detections[det_idx]
             was_tentative = track.state == TrackState.TENTATIVE
+            was_lost = track.state == TrackState.LOST
+
             track.update_from_fused(fd, ts=ts)
 
             # State transitions
-            if track.state == TrackState.LOST:
+            if was_lost:
                 track.state = TrackState.CONFIRMED
                 self.total_reacquired += 1
+                track._record_event(LifecycleEvent.REACQUIRED)
+                logger.info("Track %d REACQUIRED (hits=%d)", tid, track.hit_count)
             elif was_tentative and track.hit_count >= self.min_hits:
                 track.state = TrackState.CONFIRMED
                 track._record_event(LifecycleEvent.CONFIRMED)
@@ -358,10 +425,11 @@ class PersonTracker:
 
         # ----------------------------------------------------------------
         # 4. Mark unmatched existing tracks as missed
+        #    age_frames is incremented inside mark_missed()
         # ----------------------------------------------------------------
         for tid in unmatched_track_ids:
             track = self._tracks[tid]
-            track.mark_missed()
+            track.mark_missed(ts=ts)
             if track.missed_frames > self.max_missed:
                 if track.state != TrackState.LOST:
                     track.state = TrackState.LOST
@@ -380,10 +448,22 @@ class PersonTracker:
                     track.state = TrackState.EXPIRED
                     track._record_event(LifecycleEvent.EXPIRED)
                     self.total_expired += 1
-                    logger.info("Track %d EXPIRED (age_since_seen=%.1fs)", tid, age_since_seen)
+                    logger.info(
+                        "Track %d EXPIRED (age_since_seen=%.1fs)", tid, age_since_seen
+                    )
 
         # ----------------------------------------------------------------
-        # 6. Return confirmed tracks
+        # 6. Update peak concurrent count
+        # ----------------------------------------------------------------
+        active_count = sum(
+            1 for t in self._tracks.values()
+            if t.state in (TrackState.TENTATIVE, TrackState.CONFIRMED)
+        )
+        if active_count > self.peak_concurrent_tracks:
+            self.peak_concurrent_tracks = active_count
+
+        # ----------------------------------------------------------------
+        # 7. Return confirmed tracks
         # ----------------------------------------------------------------
         return [t for t in self._tracks.values() if t.state == TrackState.CONFIRMED]
 
@@ -394,19 +474,57 @@ class PersonTracker:
     def get_track(self, track_id: int) -> Optional[TrackedPerson]:
         return self._tracks.get(track_id)
 
+    def active_tracks(self) -> List[TrackedPerson]:
+        """Return TENTATIVE + CONFIRMED tracks."""
+        return [
+            t for t in self._tracks.values()
+            if t.state in (TrackState.TENTATIVE, TrackState.CONFIRMED)
+        ]
+
+    def lost_tracks(self) -> List[TrackedPerson]:
+        """Return LOST tracks."""
+        return [t for t in self._tracks.values() if t.state == TrackState.LOST]
+
+    def expired_tracks(self) -> List[TrackedPerson]:
+        """Return EXPIRED tracks."""
+        return [t for t in self._tracks.values() if t.state == TrackState.EXPIRED]
+
     def lifecycle_summary(self) -> dict:
         """Return JSON-serialisable lifecycle and per-track report."""
+        all_t = list(self._tracks.values())
+        confirmed_count = sum(1 for t in all_t if t.state == TrackState.CONFIRMED)
+        tentative_count = sum(1 for t in all_t if t.state == TrackState.TENTATIVE)
+        lost_count = sum(1 for t in all_t if t.state == TrackState.LOST)
+        expired_count = sum(1 for t in all_t if t.state == TrackState.EXPIRED)
+
+        # Depth validity stats across all track lifecycle events
+        total_valid_frames = sum(
+            sum(1 for _, evt, _ in t.lifecycle if evt == LifecycleEvent.DEPTH_VALID)
+            for t in all_t
+        )
+        total_invalid_frames = sum(
+            sum(1 for _, evt, _ in t.lifecycle if evt == LifecycleEvent.DEPTH_INVALID)
+            for t in all_t
+        )
+
         return {
             "total_update_calls": self._update_count,
+            "total_detections_processed": self.total_detections,
+            "total_depth_valid_detections": self.total_depth_valid,
+            "total_depth_invalid_detections": self.total_depth_invalid,
             "total_tracks_created": self.total_created,
             "total_tracks_confirmed": self.total_confirmed,
             "total_tracks_lost": self.total_lost,
             "total_tracks_reacquired": self.total_reacquired,
             "total_tracks_expired": self.total_expired,
-            "active_track_count": sum(
-                1 for t in self._tracks.values()
-                if t.state in (TrackState.TENTATIVE, TrackState.CONFIRMED)
-            ),
+            "peak_concurrent_tracks": self.peak_concurrent_tracks,
+            "active_track_count": confirmed_count + tentative_count,
+            "confirmed_track_count": confirmed_count,
+            "tentative_track_count": tentative_count,
+            "lost_track_count": lost_count,
+            "expired_track_count": expired_count,
+            "total_track_depth_valid_frames": total_valid_frames,
+            "total_track_depth_invalid_frames": total_invalid_frames,
             "tracks": {
                 str(tid): {
                     **t.to_dict(),
@@ -425,6 +543,10 @@ class PersonTracker:
         self.total_lost = 0
         self.total_reacquired = 0
         self.total_expired = 0
+        self.total_detections = 0
+        self.total_depth_valid = 0
+        self.total_depth_invalid = 0
+        self.peak_concurrent_tracks = 0
 
     # ------------------------------------------------------------------
     # Private helpers
@@ -496,4 +618,3 @@ class PersonTracker:
         ]
 
         return matched, unmatched_dets, unmatched_tracks
-

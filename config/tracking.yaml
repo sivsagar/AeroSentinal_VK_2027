@@ -1,0 +1,43 @@
+# ============================================================
+# AeroSentinel — PersonTracker Configuration
+# Team: VK26-AU-PAI-0399
+# ============================================================
+
+tracking:
+  # IoU threshold for associating a new detection with an existing track.
+  # Lower values allow wider positional drift between frames (useful for
+  # slow-moving drones at low frame rates).
+  iou_threshold: 0.3
+
+  # Number of consecutive matched detections before a track is promoted
+  # from TENTATIVE to CONFIRMED.
+  min_hits: 3
+
+  # Maximum consecutive frames without a matched detection before a track
+  # transitions from CONFIRMED to LOST. At 10 Hz, 15 frames ≈ 1.5 s.
+  max_missed: 15
+
+  # Seconds after last detection before a LOST track is permanently expired
+  # and removed from the active set. At 10 Hz with max_missed=15, a track
+  # lingers ~20 s before hard expiry. Set large enough to allow person-
+  # re-entry after temporary occlusion.
+  max_expired_age_s: 20.0
+
+  # Exponential Moving Average smoothing factor for distance estimates.
+  # Range [0.0, 1.0]. Higher = faster response to new measurements.
+  # 0.7 gives 70 % weight to the new sample.
+  ema_alpha: 0.7
+
+  # Duplicate suppression: when two detections overlap by more than this
+  # IoU ratio, only the higher-confidence detection is forwarded to the
+  # tracker to prevent ID splits on partially overlapping bboxes.
+  duplicate_iou_threshold: 0.85
+
+  # Minimum fraction [0–100] of bbox pixels with valid depth readings
+  # before the depth measurement is accepted as distance_valid=True.
+  min_valid_depth_pct: 5.0
+
+  # Depth range accepted as physically valid (metres).
+  min_valid_depth_m: 0.1
+  max_valid_depth_m: 10.0
+
