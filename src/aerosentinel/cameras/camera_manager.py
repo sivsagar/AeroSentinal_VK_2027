@@ -124,17 +124,32 @@ class CameraManager:
 
     def _init_drivers(self) -> None:
         """Lazily import and instantiate drivers based on config / mock flag."""
-        rgb_cfg = self._config.get("rgb_camera", {})
-        depth_cfg = self._config.get("depth_camera", {})
+        rgb_cfg = self._config.get("rgb_camera")
+        if rgb_cfg is None and ("resolution" in self._config or "format" in self._config):
+            rgb_cfg = self._config
+        rgb_cfg = rgb_cfg or {}
+
+        depth_cfg = self._config.get("depth_camera")
+        if depth_cfg is None and ("depth_resolution" in self._config or "color_resolution" in self._config):
+            depth_cfg = self._config
+        depth_cfg = depth_cfg or {}
 
         use_mock = self._mock or rgb_cfg.get("mock", False)
         use_mock_depth = self._mock or depth_cfg.get("mock", False)
 
         if use_mock:
             try:
-                from simulation.mock_camera import MockRGBCamera
-            except ModuleNotFoundError:
                 from mock_camera import MockRGBCamera
+            except ModuleNotFoundError:
+                try:
+                    from simulation.mock_camera import MockRGBCamera
+                except ModuleNotFoundError:
+                    import sys
+                    from pathlib import Path
+                    sim_dir = Path(__file__).resolve().parents[3] / "simulation"
+                    if str(sim_dir) not in sys.path:
+                        sys.path.insert(0, str(sim_dir))
+                    from mock_camera import MockRGBCamera
             self._rgb_driver = MockRGBCamera(config=rgb_cfg)
             logger.info("CameraManager: RGB driver → MockRGBCamera")
         elif rgb_cfg.get("enabled", True):
@@ -147,9 +162,17 @@ class CameraManager:
 
         if use_mock_depth:
             try:
-                from simulation.mock_camera import MockDepthCamera
-            except ModuleNotFoundError:
                 from mock_camera import MockDepthCamera
+            except ModuleNotFoundError:
+                try:
+                    from simulation.mock_camera import MockDepthCamera
+                except ModuleNotFoundError:
+                    import sys
+                    from pathlib import Path
+                    sim_dir = Path(__file__).resolve().parents[3] / "simulation"
+                    if str(sim_dir) not in sys.path:
+                        sys.path.insert(0, str(sim_dir))
+                    from mock_camera import MockDepthCamera
             self._depth_driver = MockDepthCamera(config=depth_cfg)
             logger.info("CameraManager: Depth driver → MockDepthCamera")
         elif depth_cfg.get("enabled", True):

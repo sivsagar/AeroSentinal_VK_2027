@@ -179,18 +179,17 @@ def _init_cameras(cfg: ConfigLoader, mock: bool) -> Optional[Any]:
     try:
         from aerosentinel.cameras.camera_manager import CameraManager
 
-        camera_cfg = {}
-        try:
-            camera_cfg = cfg.get("rgb_camera", {})
-        except Exception:
-            pass
+        camera_cfg = {
+            "rgb_camera": cfg.get("rgb_camera", {}),
+            "depth_camera": cfg.get("depth_camera", {}),
+        }
 
         mgr = CameraManager(config=camera_cfg, mock=mock)
         mgr.start_all()
         logger.info("CameraManager started (mock=%s).", mock)
         return mgr
     except Exception as exc:
-        logger.error("Camera init failed: %s", exc)
+        logger.exception("Camera init failed: %s", exc)
         return None
 
 
@@ -199,33 +198,71 @@ def _init_cameras(cfg: ConfigLoader, mock: bool) -> Optional[Any]:
 # ---------------------------------------------------------------------------
 
 
-def _init_perception(cfg: ConfigLoader, mock: bool) -> Optional[Any]:
+def _init_perception(cfg: ConfigLoader, mock: bool) -> Any:
     """Initialise PersonDetector with ONNX or Mock inference engine."""
-    try:
+    from aerosentinel.perception.detector import PersonDetector
+
+    # Read configuration keys from detection.* (with fallback to ai.*)
+    model_path = cfg.get("detection.model_path", cfg.get("ai.model_path", None))
+    conf_threshold = float(
+        cfg.get("detection.confidence_threshold", cfg.get("ai.confidence_threshold", 0.45))
+    )
+    input_resolution = tuple(
+        cfg.get("detection.input_resolution", cfg.get("ai.input_resolution", [320, 320]))
+    )
+    fps_target = float(
+        cfg.get("detection.inference_fps_target", cfg.get("ai.inference_fps_target", 3.0))
+    )
+    target_classes = cfg.get("detection.target_classes", [0])
+    warmup_frames = int(cfg.get("detection.performance.warmup_frames", 3))
+
+    if mock:
         from aerosentinel.perception.inference_engine import MockInferenceEngine
-        from aerosentinel.perception.detector import PersonDetector
 
-        model_path = cfg.get("ai.model_path", None)
-        conf_threshold = cfg.get("ai.confidence_threshold", 0.4)
+        engine = MockInferenceEngine(input_resolution=input_resolution)
+        engine.load()
+        logger.info("AI perception: using MockInferenceEngine (mock mode active).")
+    else:
+        # Hardware mode: MUST use the real ONNX model. Never silently fall back to mock.
+        if not model_path:
+            raise ValueError(
+                "Hardware mode requires a valid model path in detection.model_path (none configured)."
+            )
 
-        if mock or not model_path:
-            engine = MockInferenceEngine()
-            logger.info("AI perception: using MockInferenceEngine (no model path or mock mode).")
-        else:
-            try:
-                from aerosentinel.perception.inference_engine import ONNXInferenceEngine
-                engine = ONNXInferenceEngine(model_path=model_path)
-                logger.info("AI perception: ONNXInferenceEngine loaded from %s.", model_path)
-            except Exception as exc:
-                logger.warning("ONNX engine unavailable (%s); falling back to MockInferenceEngine.", exc)
-                engine = MockInferenceEngine()
+        model_file = Path(model_path)
+        if not model_file.is_file():
+            raise FileNotFoundError(
+                f"ONNX model file not found at '{model_path}'. "
+                "Hardware mode requires a valid ONNX model file. "
+                "Download or export the model first (see models/README.md), or run with --mock for simulation."
+            )
 
-        detector = PersonDetector(engine=engine, conf_threshold=conf_threshold)
-        logger.info("PersonDetector initialised (conf_threshold=%.2f).", conf_threshold)
-        return detector
-    except Exception as exc:
-        logger.error("Perception init failed: %s", exc)
-        return None
+        from aerosentinel.perception.inference_engine import ONNXInferenceEngine
+
+        logger.info("AI perception: loading ONNX model from %s...", model_path)
+        engine = ONNXInferenceEngine(
+            model_path=str(model_file),
+            input_resolution=input_resolution,
+            conf_threshold=conf_threshold,
+        )
+        engine.load()
+        engine.warmup()
+        logger.info("AI perception: ONNXInferenceEngine loaded successfully from %s.", model_path)
+
+    detector = PersonDetector(
+        engine=engine,
+        target_class_ids=target_classes,
+        conf_threshold=conf_threshold,
+        inference_fps_target=fps_target,
+        warmup_frames=warmup_frames,
+    )
+    logger.info(
+        "PersonDetector initialised (conf_threshold=%.2f, fps_target=%.1f, input_res=%s).",
+        conf_threshold,
+        fps_target,
+        input_resolution,
+    )
+    return detector
 
 
 # ---------------------------------------------------------------------------

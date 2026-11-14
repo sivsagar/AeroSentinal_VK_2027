@@ -23,11 +23,18 @@ from typing import Dict, Optional, Tuple
 import numpy as np
 
 # Local import of base classes (no hardware dependency)
-from src.aerosentinel.cameras.camera_manager import (
-    BaseDepthDriver,
-    BaseRGBDriver,
-    IMUData,
-)
+try:
+    from aerosentinel.cameras.camera_manager import (
+        BaseDepthDriver,
+        BaseRGBDriver,
+        IMUData,
+    )
+except ImportError:
+    from src.aerosentinel.cameras.camera_manager import (
+        BaseDepthDriver,
+        BaseRGBDriver,
+        IMUData,
+    )
 
 try:
     import cv2  # type: ignore

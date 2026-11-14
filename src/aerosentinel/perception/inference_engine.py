@@ -10,6 +10,7 @@ Supports:
 from __future__ import annotations
 
 import logging
+import os
 import time
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
@@ -103,6 +104,11 @@ class ONNXInferenceEngine(InferenceEngine):
     # ------------------------------------------------------------------
 
     def load(self) -> None:
+        if not self.model_path:
+            raise ValueError("ONNXInferenceEngine requires a non-empty model_path.")
+        if not os.path.isfile(self.model_path):
+            raise FileNotFoundError(f"ONNX model file not found at: '{self.model_path}'")
+
         try:
             import onnxruntime as ort  # noqa: F401
 
@@ -117,15 +123,16 @@ class ONNXInferenceEngine(InferenceEngine):
                 self._input_name,
                 self._output_names,
             )
-        except ImportError:
-            logger.warning(
-                "onnxruntime not available — ONNXInferenceEngine cannot load. "
-                "Use MockInferenceEngine for testing."
+        except ImportError as exc:
+            logger.error(
+                "onnxruntime not available — ONNXInferenceEngine cannot load."
             )
-            raise
+            raise ImportError(
+                "onnxruntime is required for ONNXInferenceEngine: pip install onnxruntime"
+            ) from exc
         except Exception as exc:
             logger.error("Failed to load ONNX model: %s", exc)
-            raise
+            raise RuntimeError(f"Failed to load ONNX model from '{self.model_path}': {exc}") from exc
 
     def warmup(self) -> None:
         if self._session is None:

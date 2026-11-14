@@ -18,7 +18,10 @@ from typing import List, Optional, Tuple
 
 import numpy as np
 
-from src.aerosentinel.cameras.camera_manager import IMUData
+try:
+    from aerosentinel.cameras.camera_manager import IMUData
+except ImportError:
+    from src.aerosentinel.cameras.camera_manager import IMUData
 
 
 # ---------------------------------------------------------------------------
