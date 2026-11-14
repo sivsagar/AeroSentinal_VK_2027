@@ -1,7 +1,7 @@
 #!/usr/bin/env bash
 # =============================================================================
 # AeroSentinel — Dependency Installation Script
-# Raspberry Pi 4 Bookworm 64-bit (aarch64)
+# Target: Raspberry Pi 4B (8 GB RAM), Debian 13 Trixie ARM64 (aarch64)
 # =============================================================================
 # Installs system packages, creates a venv, installs Python packages,
 # handles RealSense wheel availability, and runs the hardware check at the end.
@@ -97,8 +97,8 @@ if [[ "${IS_ARM64}" == "true" ]]; then
   info "Installing picamera2 via apt (recommended on RPi)…"
   if command -v apt-get &>/dev/null; then
     sudo apt-get install -y --no-install-recommends python3-picamera2 || \
-      warn "picamera2 not found in apt — will try pip later."
-    success "picamera2 installed via apt."
+      warn "python3-picamera2 not found in apt — please ensure apt repositories are configured."
+    success "picamera2 package checked."
   fi
 fi
 

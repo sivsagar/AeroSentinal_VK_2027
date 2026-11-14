@@ -69,7 +69,7 @@ make install
 ldconfig
 
 echo "Verifying pyrealsense2 import..."
-python3 -c "import pyrealsense2 as rs; print('librealsense version:', rs.__version__)" || {
+python3 -c "import pyrealsense2 as rs; print('pyrealsense2 imported successfully')" || {
     echo "Warning: Python bindings built but not in default site-packages. Check /usr/local/lib/python3.*/site-packages."
 }
 

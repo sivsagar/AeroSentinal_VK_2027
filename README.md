@@ -82,8 +82,8 @@ AeroSentinel is an edge-native, real-time perception and disaster search-and-res
 ## 4. Quick Start Guide
 
 ### Prerequisites
-- Raspberry Pi 4B running **Raspberry Pi OS (64-bit, Bookworm)** or Ubuntu 22.04/24.04 ARM64.
-- Python 3.9+.
+- Raspberry Pi 4B running **Debian 13 (Trixie) ARM64** or **Raspberry Pi OS (64-bit, Bookworm)** / Ubuntu 22.04/24.04 ARM64.
+- Python 3.9+ (tested on Python 3.13.5 ARM64).
 
 ### Installation
 

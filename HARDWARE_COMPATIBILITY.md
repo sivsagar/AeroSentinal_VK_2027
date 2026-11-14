@@ -196,7 +196,7 @@ See [Section 8](#8-librealsense-source-build-procedure) for the full build proce
 - After source build, the `.so` wheel file is in `build/wrappers/python/`
 - Install via: `pip install build/wrappers/python/pyrealsense2-*.whl`
 - Or copy the `.so` to site-packages manually
-- Test: `python3 -c "import pyrealsense2 as rs; print(rs.__version__)"`
+- Test: `python3 -c "import pyrealsense2 as rs; print('pyrealsense2 imported successfully')"`
 
 ---
 
