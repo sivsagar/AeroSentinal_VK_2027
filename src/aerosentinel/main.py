@@ -64,6 +64,7 @@ _CONFIG_FILES = [
     "depth.yaml",
     "ai.yaml",
     "fusion.yaml",
+    "tracking.yaml",
     "navigation.yaml",
     "mavlink.yaml",
     "mission.yaml",
@@ -304,6 +305,20 @@ def _init_fusion(cfg: ConfigLoader) -> Optional[Any]:
         return None
 
 
+def _init_tracker(cfg: ConfigLoader) -> Optional[Any]:
+    """Initialise PersonTracker module."""
+    try:
+        from aerosentinel.perception.person_tracker import PersonTracker
+
+        tracking_cfg = cfg.get("tracking", {})
+        tracker = PersonTracker(config=tracking_cfg)
+        logger.info("PersonTracker initialised.")
+        return tracker
+    except Exception as exc:
+        logger.error("Tracker init failed: %s", exc)
+        return None
+
+
 # ---------------------------------------------------------------------------
 # Module E — IMU Processing
 # ---------------------------------------------------------------------------
@@ -483,13 +498,14 @@ def _main_loop(
     mavlink_client: Optional[Any],
     system_state: Optional[Any],
     loop_hz: float = 10.0,
+    tracker: Optional[Any] = None,
 ) -> None:
     """
     Main application event loop.
 
     Each tick (at ~loop_hz Hz):
       1. Acquire RGB + Depth frames
-      2. Run AI detection
+      2. Run AI detection + RGB-D distance fusion + multi-person tracking
       3. Run depth/obstacle processing
       4. Fuse RGB + Depth
       5. Process IMU
@@ -522,10 +538,11 @@ def _main_loop(
                 logger.debug("Camera frame error: %s", exc)
 
         # ----------------------------------------------------------------
-        # 2. AI detection (Module B) & RGB-D Fusion (Module D)
+        # 2. AI detection (Module B) & RGB-D Fusion (Module D) & Tracking
         # ----------------------------------------------------------------
         detections = []
         fused_detections = []
+        active_tracks = []
         annotated_frame = rgb_frame
 
         # Prioritize RealSense RGB + aligned Depth from the same acquisition cycle
@@ -539,11 +556,17 @@ def _main_loop(
                     fused_detections = fusion.fuse(
                         detections, depth_mm, rgb_timestamp=rs_ts, depth_timestamp=rs_ts
                     )
+
+                if tracker is not None:
+                    active_tracks = tracker.update(fused_detections, timestamp=rs_ts)
+                    if rs_rgb is not None:
+                        annotated_frame = tracker.draw_tracks(rs_rgb, active_tracks)
+                elif fusion is not None and fused_detections and rs_rgb is not None:
                     annotated_frame = fusion.draw_fused_detections(rs_rgb, fused_detections)
                 elif rs_rgb is not None:
                     annotated_frame = rs_rgb
             except Exception as exc:
-                logger.debug("RealSense RGB-D detection/fusion error: %s", exc)
+                logger.debug("RealSense RGB-D detection/fusion/tracking error: %s", exc)
         elif detector is not None and rgb_frame is not None:
             # Fallback to Pi Camera RGB only when RealSense is unavailable
             try:
@@ -670,22 +693,43 @@ def _main_loop(
                 # Record survivor detections during active mission
                 active_mission = mission_mgr.get_active_mission()
                 if active_mission is not None:
-                    for fd in fused_detections:
-                        try:
-                            fd_dict = fd.to_dict()
-                            det_dict = {
-                                "class_name": "Potential Survivor",
-                                "confidence": fd_dict.get("confidence", 0.0),
-                                "distance_m": fd_dict.get("distance_m"),
-                                "bbox_json": str(fd.detection.bbox),
-                                "hazard_category": "PERSON_DETECTED",
-                                "verification_status": "PENDING_HUMAN_REVIEW",
-                                "lat": None,
-                                "lon": None,
-                            }
-                            mission_mgr.record_detection(active_mission.id, det_dict)
-                        except Exception as exc:
-                            logger.debug("Detection record error: %s", exc)
+                    if active_tracks:
+                        for trk in active_tracks:
+                            if trk.state in ("confirmed", "tentative"):
+                                try:
+                                    trk_dict = trk.to_dict()
+                                    det_dict = {
+                                        "class_name": "Potential Survivor",
+                                        "confidence": trk_dict.get("confidence", 0.0),
+                                        "distance_m": trk_dict.get("estimated_distance_m"),
+                                        "bbox_json": str(trk_dict.get("bbox")),
+                                        "hazard_category": "PERSON_DETECTED",
+                                        "verification_status": "PENDING_HUMAN_REVIEW",
+                                        "track_id": trk_dict.get("track_id"),
+                                        "lat": None,
+                                        "lon": None,
+                                    }
+                                    mission_mgr.record_detection(active_mission.id, det_dict)
+                                except Exception as exc:
+                                    logger.debug("Track record error: %s", exc)
+                    else:
+                        for fd in fused_detections:
+                            try:
+                                fd_dict = fd.to_dict()
+                                det_dict = {
+                                    "class_name": "Potential Survivor",
+                                    "confidence": fd_dict.get("confidence", 0.0),
+                                    "distance_m": fd_dict.get("distance_m"),
+                                    "bbox_json": str(fd.detection.bbox),
+                                    "hazard_category": "PERSON_DETECTED",
+                                    "verification_status": "PENDING_HUMAN_REVIEW",
+                                    "track_id": fd_dict.get("detection_id"),
+                                    "lat": None,
+                                    "lon": None,
+                                }
+                                mission_mgr.record_detection(active_mission.id, det_dict)
+                            except Exception as exc:
+                                logger.debug("Detection record error: %s", exc)
 
         # ----------------------------------------------------------------
         # 9. Performance tick
@@ -764,8 +808,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         if system_state and depth_proc is not None:
             system_state.depth_processing_running = True
 
-        # --- Module D: Fusion ---
+        # --- Module D: Fusion & Tracking ---
         fusion = _init_fusion(cfg)
+        tracker = _init_tracker(cfg)
 
         # --- Module E: IMU ---
         imu_proc = _init_imu(cfg)
@@ -807,6 +852,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             mavlink_client=mavlink_client,
             system_state=system_state,
             loop_hz=cfg.get("system.loop_hz", 10.0),
+            tracker=tracker,
         )
 
     except Exception as exc:

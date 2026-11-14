@@ -21,6 +21,7 @@ from .obstacle_detector import (
     RegionAnalysis,
 )
 from .rgbd_fusion import FusedDetection, RGBDFusion
+from .person_tracker import PersonTracker, TrackedPerson
 from .hazard_detector import (
     HazardCategory,
     HazardDetector,
@@ -44,6 +45,8 @@ __all__ = [
     "RegionAnalysis",
     "FusedDetection",
     "RGBDFusion",
+    "PersonTracker",
+    "TrackedPerson",
     "HazardCategory",
     "HazardDetector",
     "HazardEvent",

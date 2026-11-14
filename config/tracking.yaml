@@ -1,0 +1,9 @@
+tracking:
+  enabled: true
+  iou_threshold: 0.3
+  max_lost_frames: 15
+  min_hits: 1
+  distance_ema_alpha: 0.7
+  max_center_dist_norm: 1.2
+  dedup_iou_threshold: 0.85
+
