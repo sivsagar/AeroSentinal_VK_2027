@@ -267,6 +267,30 @@ def _init_fusion(cfg: ConfigLoader) -> Optional[Any]:
 
 
 # ---------------------------------------------------------------------------
+# Module D (tracker) — PersonTracker
+# ---------------------------------------------------------------------------
+
+
+def _init_tracker(cfg: ConfigLoader) -> Optional[Any]:
+    """Initialise PersonTracker for multi-person depth-aware tracking."""
+    try:
+        from aerosentinel.perception.person_tracker import PersonTracker
+
+        tracker = PersonTracker(
+            iou_threshold=cfg.get("fusion.tracker_iou_threshold", 0.3),
+            min_hits=cfg.get("fusion.tracker_min_hits", 3),
+            max_missed=cfg.get("fusion.tracker_max_missed", 5),
+            max_expired_age_s=cfg.get("fusion.tracker_max_expired_age_s", 20.0),
+            ema_alpha=cfg.get("fusion.tracker_ema_alpha", 0.3),
+        )
+        logger.info("PersonTracker initialised.")
+        return tracker
+    except Exception as exc:
+        logger.error("PersonTracker init failed: %s", exc)
+        return None
+
+
+# ---------------------------------------------------------------------------
 # Module E — IMU Processing
 # ---------------------------------------------------------------------------
 
@@ -438,6 +462,7 @@ def _main_loop(
     depth_proc: Optional[Any],
     obs_det: Optional[Any],
     fusion: Optional[Any],
+    tracker: Optional[Any],
     imu_proc: Optional[Any],
     loc_mgr: Optional[Any],
     hazard_det: Optional[Any],
@@ -544,6 +569,20 @@ def _main_loop(
                 fused_detections = fusion.fuse(detections, depth_m_for_fusion)
             except Exception as exc:
                 logger.debug("Fusion error: %s", exc)
+
+        # ----------------------------------------------------------------
+        # 4b. Person Tracking (Module D — tracker)
+        # ----------------------------------------------------------------
+        confirmed_tracks = []
+        if tracker is not None and fused_detections is not None:
+            try:
+                confirmed_tracks = tracker.update(fused_detections)
+                if system_state is not None and confirmed_tracks:
+                    system_state.recent_detections = [
+                        t.to_dict() for t in confirmed_tracks
+                    ]
+            except Exception as exc:
+                logger.debug("Tracker update error: %s", exc)
 
         # ----------------------------------------------------------------
         # 5. IMU (Module E)
@@ -714,6 +753,9 @@ def main(argv: Optional[List[str]] = None) -> int:
         # --- Module D: Fusion ---
         fusion = _init_fusion(cfg)
 
+        # --- Module D (tracker): PersonTracker ---
+        tracker = _init_tracker(cfg)
+
         # --- Module E: IMU ---
         imu_proc = _init_imu(cfg)
 
@@ -747,6 +789,7 @@ def main(argv: Optional[List[str]] = None) -> int:
             depth_proc=depth_proc,
             obs_det=obs_det,
             fusion=fusion,
+            tracker=tracker,
             imu_proc=imu_proc,
             loc_mgr=loc_mgr,
             hazard_det=hazard_det,

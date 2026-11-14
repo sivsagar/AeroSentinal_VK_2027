@@ -1,8 +1,8 @@
 # AeroSentinel — Development Status Tracker
 
-> **Updated:** 2026-11-12  
-> **Version:** 0.1.0  
-> **Automated Test Suite:** 166 passed, 0 failed (pytest 9.2.0)
+> **Updated:** 2026-11-14  
+> **Version:** 0.1.1  
+> **Automated Test Suite:** 189 passed, 0 failed (pytest 9.2.0)
 
 ---
 
@@ -46,7 +46,8 @@
 - [x] `src/aerosentinel/perception/detector.py` — "Potential Survivor" detection overlay.
 - [x] `src/aerosentinel/perception/depth_processor.py` — Filter chain (decimation, spatial, temporal, hole filling) & colormaps.
 - [x] `src/aerosentinel/perception/obstacle_detector.py` — Left/Center/Right corridor analysis.
-- [x] `src/aerosentinel/perception/rgbd_fusion.py` — Bounding box depth association & distance estimation.
+- [x] `src/aerosentinel/perception/rgbd_fusion.py` — Bounding box depth association & distance estimation with `valid_depth_percent` invariant (`distance_valid=True` requires `valid_depth_percent > 0` + finite positive distance).
+- [x] `src/aerosentinel/perception/person_tracker.py` — IoU multi-person tracker with depth metadata propagation, monotonic track IDs, EMA smoothing, lifecycle events (created/confirmed/lost/reacquired/expired), simulated-timestamp injection.
 - [x] `src/aerosentinel/perception/hazard_detector.py` — Hazard classification & verification status tracking.
 
 ### Phase 4 — Mission Management (100% Complete)

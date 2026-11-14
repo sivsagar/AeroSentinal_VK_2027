@@ -28,6 +28,12 @@ from .hazard_detector import (
     LocalizationStatus,
     VerificationStatus,
 )
+from .person_tracker import (
+    PersonTracker,
+    TrackedPerson,
+    TrackState,
+    LifecycleEvent,
+)
 
 __all__ = [
     "Detection",
@@ -49,4 +55,8 @@ __all__ = [
     "HazardEvent",
     "LocalizationStatus",
     "VerificationStatus",
+    "PersonTracker",
+    "TrackedPerson",
+    "TrackState",
+    "LifecycleEvent",
 ]
