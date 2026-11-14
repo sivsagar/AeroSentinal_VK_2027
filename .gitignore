@@ -75,13 +75,20 @@ Thumbs.db
 data/detections/*
 data/missions/*
 data/logs/*
+data/diagnostics/*
 !data/detections/.gitkeep
 !data/missions/.gitkeep
 !data/logs/.gitkeep
+!data/diagnostics/.gitkeep
 
 # ============================================================
 # Models (large binary files — use Git LFS or external storage)
 # ============================================================
+*.onnx
+*.pt
+*.tflite
+*.bin
+*.engine
 models/*.onnx
 models/*.pt
 models/*.tflite
