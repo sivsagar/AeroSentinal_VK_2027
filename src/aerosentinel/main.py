@@ -295,7 +295,8 @@ def _init_fusion(cfg: ConfigLoader) -> Optional[Any]:
     try:
         from aerosentinel.perception.rgbd_fusion import RGBDFusion
 
-        fusion = RGBDFusion()
+        fusion_cfg = cfg.get("rgbd_fusion", {})
+        fusion = RGBDFusion(config=fusion_cfg)
         logger.info("RGBDFusion initialised.")
         return fusion
     except Exception as exc:
@@ -511,6 +512,7 @@ def _main_loop(
 
         if camera_mgr is not None:
             try:
+                # Keep Pi Camera 3 acquisition operational
                 rgb_result = camera_mgr.get_rgb_frame()
                 if rgb_result is not None:
                     rgb_frame, _ = rgb_result
@@ -520,12 +522,30 @@ def _main_loop(
                 logger.debug("Camera frame error: %s", exc)
 
         # ----------------------------------------------------------------
-        # 2. AI detection (Module B)
+        # 2. AI detection (Module B) & RGB-D Fusion (Module D)
         # ----------------------------------------------------------------
         detections = []
+        fused_detections = []
         annotated_frame = rgb_frame
 
-        if detector is not None and rgb_frame is not None:
+        # Prioritize RealSense RGB + aligned Depth from the same acquisition cycle
+        if depth_result is not None:
+            try:
+                depth_mm, rs_rgb, rs_ts = depth_result
+                if detector is not None and rs_rgb is not None:
+                    _, detections = detector.detect(rs_rgb)
+
+                if fusion is not None and detections:
+                    fused_detections = fusion.fuse(
+                        detections, depth_mm, rgb_timestamp=rs_ts, depth_timestamp=rs_ts
+                    )
+                    annotated_frame = fusion.draw_fused_detections(rs_rgb, fused_detections)
+                elif rs_rgb is not None:
+                    annotated_frame = rs_rgb
+            except Exception as exc:
+                logger.debug("RealSense RGB-D detection/fusion error: %s", exc)
+        elif detector is not None and rgb_frame is not None:
+            # Fallback to Pi Camera RGB only when RealSense is unavailable
             try:
                 annotated_frame, detections = detector.detect(rgb_frame)
             except Exception as exc:
@@ -569,16 +589,12 @@ def _main_loop(
                 logger.debug("Obstacle processing error: %s", exc)
 
         # ----------------------------------------------------------------
-        # 4. RGB-D Fusion (Module D)
+        # 4. Fallback Fusion (if not executed in Step 2)
         # ----------------------------------------------------------------
-        fused_detections = []
-
-        if fusion is not None and detections and depth_result is not None:
+        if fusion is not None and detections and depth_result is not None and not fused_detections:
             try:
                 depth_mm, _, _ts = depth_result
-                import numpy as np
-                depth_m_for_fusion = depth_mm.astype(np.float32) * 0.001
-                fused_detections = fusion.fuse(detections, depth_m_for_fusion)
+                fused_detections = fusion.fuse(detections, depth_mm, _ts, _ts)
             except Exception as exc:
                 logger.debug("Fusion error: %s", exc)
 
