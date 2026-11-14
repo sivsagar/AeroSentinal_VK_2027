@@ -83,11 +83,25 @@ CREATE TABLE IF NOT EXISTS system_metrics (
 );
 """
 
+EVENT_TABLE_SQL = """
+CREATE TABLE IF NOT EXISTS events (
+    id              INTEGER PRIMARY KEY AUTOINCREMENT,
+    mission_id      INTEGER,
+    timestamp       REAL    NOT NULL,
+    event_type      TEXT    NOT NULL,
+    severity        TEXT    NOT NULL DEFAULT 'INFO',
+    message         TEXT    NOT NULL,
+    metadata_json   TEXT,
+    FOREIGN KEY (mission_id) REFERENCES missions(id)
+);
+"""
+
 ALL_TABLES_SQL = [
     MISSION_TABLE_SQL,
     DETECTION_TABLE_SQL,
     TELEMETRY_TABLE_SQL,
     SYSTEM_METRIC_TABLE_SQL,
+    EVENT_TABLE_SQL,
 ]
 
 
@@ -148,4 +162,15 @@ class SystemMetric:
     cpu_temp_c: Optional[float] = None
     fps: Optional[float] = None
     dropped_frames: Optional[int] = None
+    id: Optional[int] = None
+
+
+@dataclass
+class Event:
+    timestamp: float
+    event_type: str
+    message: str
+    severity: str = "INFO"
+    mission_id: Optional[int] = None
+    metadata_json: Optional[str] = None
     id: Optional[int] = None

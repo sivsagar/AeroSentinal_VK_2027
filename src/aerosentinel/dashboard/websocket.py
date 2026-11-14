@@ -133,12 +133,21 @@ class WebSocketManager:
         tel = self.system_state.latest_telemetry
         obs = self.system_state.latest_obstacle
         imu = self.system_state.latest_imu
+        tracks = getattr(self.system_state, "active_tracks", [])
+        health = self.system_state.to_health_dict() if hasattr(self.system_state, "to_health_dict") else None
+        events = self.system_state.get_recent_events(limit=30) if hasattr(self.system_state, "get_recent_events") else None
 
         await self.broadcast_json({"type": "system_status", "data": status, "timestamp": time.time()})
+        if health:
+            await self.broadcast_json({"type": "health", "data": health, "timestamp": time.time()})
         if tel:
             await self.broadcast_json({"type": "telemetry", "data": tel, "timestamp": time.time()})
         if obs:
             await self.broadcast_json({"type": "obstacle", "data": obs, "timestamp": time.time()})
+        if tracks is not None:
+            await self.broadcast_json({"type": "tracks", "data": tracks, "timestamp": time.time()})
+        if events is not None:
+            await self.broadcast_json({"type": "events", "data": events, "timestamp": time.time()})
         if imu:
             await self.broadcast_json({"type": "imu", "data": imu, "timestamp": time.time()})
 
@@ -171,3 +180,16 @@ class WebSocketManager:
                 })
             except Exception as e:
                 logger.debug("Error encoding Depth frame: %s", e)
+
+        picam_frame = getattr(self.system_state, "picam_frame", None)
+        if picam_frame is not None:
+            try:
+                _, buf = cv2.imencode(".jpg", picam_frame, [int(cv2.IMWRITE_JPEG_QUALITY), self.jpeg_quality])
+                b64_picam = base64.b64encode(buf).decode("utf-8")
+                await self.broadcast_json({
+                    "type": "picam_frame",
+                    "data": b64_picam,
+                    "timestamp": time.time(),
+                })
+            except Exception as e:
+                logger.debug("Error encoding PiCam frame: %s", e)

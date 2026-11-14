@@ -12,6 +12,7 @@ from typing import List, Optional
 from aerosentinel.storage.models import (
     ALL_TABLES_SQL,
     Detection,
+    Event,
     Mission,
     MissionStatus,
     SystemMetric,
@@ -281,3 +282,58 @@ class DatabaseManager:
             )
             self._conn.commit()
             return cur.lastrowid
+
+    # ------------------------------------------------------------------
+    # Event CRUD
+    # ------------------------------------------------------------------
+
+    @_retry_on_locked
+    def save_event(self, event: Event) -> int:
+        with self._lock:
+            cur = self._conn.cursor()
+            cur.execute(
+                """INSERT INTO events
+                   (mission_id, timestamp, event_type, severity, message, metadata_json)
+                   VALUES (?,?,?,?,?,?)""",
+                (
+                    event.mission_id,
+                    event.timestamp,
+                    event.event_type,
+                    event.severity,
+                    event.message,
+                    event.metadata_json,
+                ),
+            )
+            self._conn.commit()
+            return cur.lastrowid
+
+    def get_recent_events(
+        self, mission_id: Optional[int] = None, limit: int = 50
+    ) -> List[Event]:
+        with self._lock:
+            cur = self._conn.cursor()
+            if mission_id is not None:
+                cur.execute(
+                    """SELECT id, mission_id, timestamp, event_type, severity, message, metadata_json
+                       FROM events WHERE mission_id = ? ORDER BY timestamp DESC LIMIT ?""",
+                    (mission_id, limit),
+                )
+            else:
+                cur.execute(
+                    """SELECT id, mission_id, timestamp, event_type, severity, message, metadata_json
+                       FROM events ORDER BY timestamp DESC LIMIT ?""",
+                    (limit,),
+                )
+            rows = cur.fetchall()
+            return [
+                Event(
+                    id=row["id"],
+                    mission_id=row["mission_id"],
+                    timestamp=row["timestamp"],
+                    event_type=row["event_type"],
+                    severity=row["severity"],
+                    message=row["message"],
+                    metadata_json=row["metadata_json"],
+                )
+                for row in rows
+            ]

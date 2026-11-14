@@ -681,6 +681,53 @@ def _main_loop(
         if system_state is not None:
             if annotated_frame is not None:
                 system_state.rgb_frame = annotated_frame
+            if rgb_frame is not None:
+                system_state.picam_frame = rgb_frame
+                system_state.picam_connected = True
+
+            if active_tracks:
+                system_state.active_tracks = [t.to_dict() for t in active_tracks]
+                for trk in active_tracks:
+                    if hasattr(trk, "track_id") and getattr(trk, "age_frames", 0) == 1:
+                        system_state.add_event(
+                            "TRACK_CREATED",
+                            f"Assigned new track ID #{trk.track_id} (conf={trk.confidence*100:.0f}%)",
+                            "INFO",
+                        )
+            else:
+                system_state.active_tracks = []
+
+            if obstacle_report is not None:
+                if obstacle_report.overall_status.name == "CRITICAL":
+                    closest_str = f" at {obstacle_report.closest_obstacle_m:.2f}m" if obstacle_report.closest_obstacle_m else ""
+                    system_state.add_event(
+                        "PROXIMITY_CRITICAL",
+                        f"Critical close-range hazard detected{closest_str}",
+                        "CRITICAL",
+                    )
+                elif obstacle_report.overall_status.name == "WARNING":
+                    closest_str = f" at {obstacle_report.closest_obstacle_m:.2f}m" if obstacle_report.closest_obstacle_m else ""
+                    system_state.add_event(
+                        "PROXIMITY_WARNING",
+                        f"Close-range obstacle return detected{closest_str}",
+                        "WARNING",
+                    )
+                elif obstacle_report.overall_status.name == "CAUTION":
+                    system_state.add_event(
+                        "PROXIMITY_CAUTION",
+                        "Approaching obstacle proximity caution range",
+                        "CAUTION",
+                    )
+
+            # Update metrics from monitor
+            sys_summary = monitor.summary()
+            system_state.camera_fps = sys_summary.get("fps", 0.0)
+            system_state.dropped_frames = sys_summary.get("dropped_frames", 0)
+            system_state.cpu_percent = sys_summary.get("cpu_percent")
+            system_state.ram_percent = sys_summary.get("ram_percent")
+            system_state.cpu_temp_c = sys_summary.get("cpu_temp_c")
+            system_state.metrics_timestamp = time.time()
+
             if system_state.mission_active and mission_mgr is not None:
                 # Record survivor detections during active mission
                 active_mission = mission_mgr.get_active_mission()
@@ -815,6 +862,13 @@ def main(argv: Optional[List[str]] = None) -> int:
 
         # --- Module H + K: Mission + Storage ---
         db, mission_mgr = _init_mission(cfg)
+        if system_state is not None:
+            if db is not None:
+                system_state.db_manager = db
+            if tracker is not None:
+                system_state.tracking_running = True
+            if obs_det is not None:
+                system_state.obstacle_running = True
 
         # --- Module I: MAVLink (read-only, optional) ---
         mavlink_client = _init_mavlink(cfg)

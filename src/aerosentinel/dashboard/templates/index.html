@@ -3,155 +3,339 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>AeroSentinel — Ground Control Mission Dashboard</title>
+    <title>AeroSentinel — Unified Rescue Perception Ground Control</title>
     <link rel="stylesheet" href="/static/style.css">
 </head>
-<body>
-    <div class="app-container">
-        <!-- HEADER -->
-        <header class="header">
-            <div class="logo-area">
-                <span class="icon">🚁</span>
-                <div>
-                    <h1>AEROSENTINEL</h1>
-                    <span class="subtitle">AI-Powered Disaster Search & Rescue | Raspberry Pi 4B + D435i</span>
+<body class="dark-theme">
+    <div class="gcs-container">
+        <!-- TOP SYSTEM HEADER -->
+        <header class="gcs-header">
+            <div class="brand-area">
+                <div class="brand-icon">🚁</div>
+                <div class="brand-titles">
+                    <div class="brand-main">
+                        <span class="brand-name">AEROSENTINEL</span>
+                        <span class="system-tag">RESCUE PERCEPTION GCS v1.2</span>
+                    </div>
+                    <div class="brand-sub">Raspberry Pi 4B (Debian 13 ARM64) | Intel RealSense D435i | Pi Camera Module 3 Wide</div>
                 </div>
             </div>
-            <div class="header-status">
-                <div id="live-time" class="time-badge">00:00:00</div>
-                <div id="connection-status" class="status-pill status-disconnected">DISCONNECTED</div>
+
+            <!-- ADVISORY NOTICE -->
+            <div class="safety-advisory-pill">
+                <span class="advisory-icon">⚠️</span>
+                <span>PROVISIONAL BENCH VALUES — PERCEPTION ADVISORY ONLY — ZERO FLIGHT CONTROL AUTHORITY</span>
+            </div>
+
+            <!-- TIME & CONNECTION PILL -->
+            <div class="header-badges">
+                <div class="badge-item">
+                    <span class="badge-lbl">UPTIME</span>
+                    <span id="sys-uptime" class="badge-val">00:00:00</span>
+                </div>
+                <div class="badge-item">
+                    <span class="badge-lbl">UTC</span>
+                    <span id="live-time" class="badge-val">00:00:00</span>
+                </div>
+                <div id="connection-status" class="status-pill status-disconnected">
+                    <span class="conn-dot"></span>
+                    <span class="conn-text">CONNECTING...</span>
+                </div>
             </div>
         </header>
 
-        <!-- STATUS BAR -->
-        <div class="status-bar">
-            <div class="subsystem-item"><span id="ind-rgb" class="dot dot-red"></span> RGB Cam (Pi Cam 3)</div>
-            <div class="subsystem-item"><span id="ind-depth" class="dot dot-red"></span> Depth (D435i)</div>
-            <div class="subsystem-item"><span id="ind-ai" class="dot dot-red"></span> AI Perception</div>
-            <div class="subsystem-item"><span id="ind-mavlink" class="dot dot-red"></span> MAVLink Telemetry</div>
-            <div class="subsystem-item"><span id="ind-mission" class="dot dot-red"></span> Mission Lifecycle</div>
-            <div class="subsystem-item"><span id="ind-net" class="dot dot-red"></span> Network Online</div>
+        <!-- SUBSYSTEM STATUS STRIP -->
+        <section class="status-ribbon">
+            <div class="ribbon-item"><span id="ind-rs-rgb" class="dot dot-red"></span> RealSense RGB</div>
+            <div class="ribbon-item"><span id="ind-rs-depth" class="dot dot-red"></span> RealSense Depth</div>
+            <div class="ribbon-item"><span id="ind-picam" class="dot dot-red"></span> Pi Camera 3 Wide</div>
+            <div class="ribbon-item"><span id="ind-ai" class="dot dot-red"></span> YOLOv8n ONNX</div>
+            <div class="ribbon-item"><span id="ind-tracker" class="dot dot-red"></span> Person Tracker</div>
+            <div class="ribbon-item"><span id="ind-obstacle" class="dot dot-red"></span> Proximity Engine</div>
+            <div class="ribbon-item"><span id="ind-mavlink" class="dot dot-red"></span> MAVLink (Read-Only)</div>
+            <div class="ribbon-item"><span id="ind-net" class="dot dot-red"></span> Telemetry Link</div>
+        </section>
+
+        <!-- CRITICAL / WARNING PROXIMITY ALERT BANNER -->
+        <div id="proximity-alert-banner" class="alert-banner banner-hidden">
+            <div class="alert-content">
+                <span id="alert-icon" class="alert-icon">⚠️</span>
+                <div class="alert-msg-wrap">
+                    <strong id="alert-title">PROXIMITY WARNING</strong>
+                    <span id="alert-desc">Hazard detected in flight corridor.</span>
+                </div>
+                <div class="alert-dist-badge">
+                    <span class="dist-lbl">CLOSEST</span>
+                    <span id="alert-dist-val" class="dist-val">-- m</span>
+                </div>
+            </div>
         </div>
 
-        <!-- OBSTACLE ALERT BANNER -->
-        <div id="obstacle-alert" class="alert-banner alert-hidden">
-            ⚠️ <strong>CRITICAL OBSTACLE WARNING:</strong> Near-field hazard in flight path (<span id="alert-dist">0.0</span>m)
-        </div>
+        <!-- MAIN ROBOTICS GCS WORKSPACE -->
+        <main class="gcs-workspace">
 
-        <!-- MAIN GRID LAYOUT -->
-        <main class="dashboard-grid">
-            <!-- LEFT: RGB CAMERA + AI OVERLAY -->
-            <section class="card video-card">
-                <div class="card-header">
-                    <h2>RGB Perception Stream</h2>
-                    <span id="rgb-fps" class="badge">0 FPS</span>
-                </div>
-                <div class="video-container">
-                    <img id="rgb-stream" src="" alt="RGB Feed Offline" class="stream-img">
-                    <div id="survivor-overlay" class="survivor-banner hidden">POTENTIAL SURVIVOR DETECTED</div>
-                </div>
-            </section>
+            <!-- LEFT & CENTER: VIDEO & DEPTH FEEDS -->
+            <section class="workspace-col col-primary">
+                
+                <!-- PRIMARY VIDEO ROW (RealSense RGB + Depth Map) -->
+                <div class="video-row">
+                    <!-- FEED 1: RealSense RGB with Detection / Tracking / Proximity HUD -->
+                    <div class="card video-panel">
+                        <div class="panel-header">
+                            <div class="panel-title-group">
+                                <h3>RealSense D435i RGB Perception Feed</h3>
+                                <span class="stream-coord-tag">Camera-Relative FOV</span>
+                            </div>
+                            <div class="panel-metrics">
+                                <span id="rs-rgb-fps" class="metric-pill">0.0 FPS</span>
+                                <span id="rs-track-count-badge" class="metric-pill pill-blue">0 Tracks</span>
+                            </div>
+                        </div>
+                        <div class="video-viewport">
+                            <img id="rs-rgb-stream" src="/api/video/rgb" alt="RealSense RGB Stream Offline" class="feed-img">
+                            <div id="rgb-overlay-indicator" class="viewport-hud">
+                                <span id="hud-status" class="hud-chip chip-clear">CLEAR</span>
+                            </div>
+                        </div>
+                        <div class="panel-footer">
+                            <span class="footer-note">RealSense aligned color stream with YOLOv8n detections, persistent track IDs, distances & validity HUD.</span>
+                        </div>
+                    </div>
 
-            <!-- CENTER: REAL-TIME DEPTH MAP -->
-            <section class="card video-card">
-                <div class="card-header">
-                    <h2>RealSense D435i Depth Map</h2>
-                    <span id="depth-status" class="badge">Depth: Ready</span>
-                </div>
-                <div class="video-container">
-                    <img id="depth-stream" src="" alt="Depth Feed Offline" class="stream-img">
-                </div>
-            </section>
-
-            <!-- RIGHT: MISSION & TELEMETRY -->
-            <section class="card sidebar-card">
-                <div class="card-header">
-                    <h2>Mission Control</h2>
-                    <span id="mission-state-tag" class="badge badge-inactive">INACTIVE</span>
-                </div>
-                <div class="mission-controls">
-                    <input type="text" id="mission-name-input" placeholder="Mission Name..." value="Disaster Recon Mission 1">
-                    <div class="btn-group">
-                        <button id="btn-start" class="btn btn-green">Start</button>
-                        <button id="btn-pause" class="btn btn-yellow">Pause</button>
-                        <button id="btn-stop" class="btn btn-red">Stop</button>
+                    <!-- FEED 2: RealSense Real-Time Depth Map -->
+                    <div class="card video-panel">
+                        <div class="panel-header">
+                            <div class="panel-title-group">
+                                <h3>RealSense D435i Real-Time Depth Map</h3>
+                                <span class="stream-coord-tag">Z16 Metric Filtered</span>
+                            </div>
+                            <div class="panel-metrics">
+                                <span id="depth-coverage-badge" class="metric-pill pill-cyan">Cov: --%</span>
+                                <span id="depth-range-badge" class="metric-pill">Range: 0.25 - 8.0m</span>
+                            </div>
+                        </div>
+                        <div class="video-viewport">
+                            <img id="rs-depth-stream" src="/api/video/depth" alt="RealSense Depth Map Offline" class="feed-img">
+                            <!-- Depth Colormap Scale Bar -->
+                            <div class="depth-scale-bar">
+                                <span class="scale-lbl">0.25m (NEAR)</span>
+                                <div class="scale-gradient"></div>
+                                <span class="scale-lbl">8.0m+ (FAR)</span>
+                            </div>
+                        </div>
+                        <div class="panel-footer">
+                            <span class="footer-note">Color-coded depth map (COLORMAP_TURBO). Dark regions denote invalid, dropped, or out-of-range depth pixels.</span>
+                        </div>
                     </div>
                 </div>
 
-                <hr class="divider">
+                <!-- SECONDARY ROW: Pi Camera 3 Wide Stream + Obstacle Proximity Grid -->
+                <div class="video-row">
+                    <!-- FEED 3: Raspberry Pi Camera Module 3 Wide -->
+                    <div class="card video-panel panel-secondary">
+                        <div class="panel-header">
+                            <div class="panel-title-group">
+                                <h3>Raspberry Pi Camera Module 3 Wide</h3>
+                                <span class="stream-coord-tag">Wide Angle Recon FOV</span>
+                            </div>
+                            <div class="panel-metrics">
+                                <span id="picam-status-badge" class="metric-pill pill-green">ACTIVE</span>
+                            </div>
+                        </div>
+                        <div class="video-viewport viewport-compact">
+                            <img id="picam-stream" src="/api/video/picam" alt="Pi Camera 3 Offline" class="feed-img">
+                        </div>
+                        <div class="panel-footer">
+                            <span class="footer-note">Autonomous recon FOV (IMX708 Wide). Coordinates are independent of the RealSense depth optical center.</span>
+                        </div>
+                    </div>
 
-                <div class="card-header">
-                    <h2>Vehicle Telemetry (Read-Only)</h2>
-                </div>
-                <div class="telemetry-grid">
-                    <div class="tel-item"><span class="label">Battery:</span> <span id="tel-bat" class="val">--%</span></div>
-                    <div class="tel-item"><span class="label">Altitude:</span> <span id="tel-alt" class="val">-- m</span></div>
-                    <div class="tel-item"><span class="label">Mode:</span> <span id="tel-mode" class="val">--</span></div>
-                    <div class="tel-item"><span class="label">Armed:</span> <span id="tel-armed" class="val">--</span></div>
-                    <div class="tel-item"><span class="label">GPS:</span> <span id="tel-gps" class="val">No Fix</span></div>
-                    <div class="tel-item"><span class="label">Heading:</span> <span id="tel-yaw" class="val">--°</span></div>
+                    <!-- OBSTACLE PROXIMITY ADVISORY GRID -->
+                    <div class="card proximity-panel">
+                        <div class="panel-header">
+                            <div class="panel-title-group">
+                                <h3>Obstacle Proximity Advisory</h3>
+                                <span id="grid-layout-badge" class="badge">1×3 Spatial Grid</span>
+                            </div>
+                            <div class="panel-metrics">
+                                <span id="overall-proximity-badge" class="metric-pill chip-clear">CLEAR</span>
+                            </div>
+                        </div>
+
+                        <!-- CAMERA ORIENTATION WARNING -->
+                        <div class="orientation-alert-box">
+                            ⚠️ <strong>ORIENTATION NOTICE:</strong> Cameras mounted backwards on airframe. Sectors are strictly <em>Camera-Relative</em> (Left/Centre/Right).
+                        </div>
+
+                        <!-- SECTOR CARDS GRID -->
+                        <div class="proximity-sectors-grid" id="proximity-sectors-container">
+                            <!-- SECTOR LEFT -->
+                            <div class="sector-card" id="sector-left">
+                                <div class="sector-head">
+                                    <span class="sec-name">LEFT</span>
+                                    <span class="sec-status-chip chip-clear" id="sec-left-status">CLEAR</span>
+                                </div>
+                                <div class="sec-body">
+                                    <div class="sec-metric"><span class="m-lbl">Median:</span> <span id="sec-left-med" class="m-val">-- m</span></div>
+                                    <div class="sec-metric"><span class="m-lbl">10th %:</span> <span id="sec-left-p10" class="m-val">-- m</span></div>
+                                    <div class="sec-metric"><span class="m-lbl">Coverage:</span> <span id="sec-left-cov" class="m-val">-- %</span></div>
+                                    <div class="sec-metric"><span class="m-lbl">Near Occ:</span> <span id="sec-left-occ" class="m-val">-- %</span></div>
+                                </div>
+                                <div class="sec-foot" id="sec-left-human">--</div>
+                            </div>
+
+                            <!-- SECTOR CENTRE -->
+                            <div class="sector-card" id="sector-center">
+                                <div class="sector-head">
+                                    <span class="sec-name">CENTRE</span>
+                                    <span class="sec-status-chip chip-clear" id="sec-center-status">CLEAR</span>
+                                </div>
+                                <div class="sec-body">
+                                    <div class="sec-metric"><span class="m-lbl">Median:</span> <span id="sec-center-med" class="m-val">-- m</span></div>
+                                    <div class="sec-metric"><span class="m-lbl">10th %:</span> <span id="sec-center-p10" class="m-val">-- m</span></div>
+                                    <div class="sec-metric"><span class="m-lbl">Coverage:</span> <span id="sec-center-cov" class="m-val">-- %</span></div>
+                                    <div class="sec-metric"><span class="m-lbl">Near Occ:</span> <span id="sec-center-occ" class="m-val">-- %</span></div>
+                                </div>
+                                <div class="sec-foot" id="sec-center-human">--</div>
+                            </div>
+
+                            <!-- SECTOR RIGHT -->
+                            <div class="sector-card" id="sector-right">
+                                <div class="sector-head">
+                                    <span class="sec-name">RIGHT</span>
+                                    <span class="sec-status-chip chip-clear" id="sec-right-status">CLEAR</span>
+                                </div>
+                                <div class="sec-body">
+                                    <div class="sec-metric"><span class="m-lbl">Median:</span> <span id="sec-right-med" class="m-val">-- m</span></div>
+                                    <div class="sec-metric"><span class="m-lbl">10th %:</span> <span id="sec-right-p10" class="m-val">-- m</span></div>
+                                    <div class="sec-metric"><span class="m-lbl">Coverage:</span> <span id="sec-right-cov" class="m-val">-- %</span></div>
+                                    <div class="sec-metric"><span class="m-lbl">Near Occ:</span> <span id="sec-right-occ" class="m-val">-- %</span></div>
+                                </div>
+                                <div class="sec-foot" id="sec-right-human">--</div>
+                            </div>
+                        </div>
+
+                        <!-- PROXIMITY SUMMARY FOOTER -->
+                        <div class="proximity-summary-footer">
+                            <span class="sum-item"><strong>Closest Proximity:</strong> <span id="closest-cand-text">N/A</span></span>
+                            <span class="sum-item"><strong>Total Valid Coverage:</strong> <span id="total-coverage-text">--%</span></span>
+                        </div>
+                    </div>
                 </div>
 
-                <hr class="divider">
+            </section>
 
-                <!-- IMU MONITORING (Module E) -->
-                <div class="card-header">
-                    <h2>D435i IMU Monitor</h2>
-                    <span id="imu-valid-badge" class="badge badge-inactive">NO DATA</span>
-                </div>
-                <div class="telemetry-grid">
-                    <div class="tel-item"><span class="label">Accel X:</span> <span id="imu-ax" class="val">-- m/s²</span></div>
-                    <div class="tel-item"><span class="label">Accel Y:</span> <span id="imu-ay" class="val">-- m/s²</span></div>
-                    <div class="tel-item"><span class="label">Accel Z:</span> <span id="imu-az" class="val">-- m/s²</span></div>
-                    <div class="tel-item"><span class="label">Gyro X:</span> <span id="imu-gx" class="val">-- rad/s</span></div>
-                    <div class="tel-item"><span class="label">Gyro Y:</span> <span id="imu-gy" class="val">-- rad/s</span></div>
-                    <div class="tel-item"><span class="label">Gyro Z:</span> <span id="imu-gz" class="val">-- rad/s</span></div>
-                    <div class="tel-item"><span class="label">Roll Est:</span> <span id="imu-roll" class="val">--°</span></div>
-                    <div class="tel-item"><span class="label">Pitch Est:</span> <span id="imu-pitch" class="val">--°</span></div>
-                </div>
-                <p style="font-size:0.65rem;color:#888;margin:4px 0 0 2px;">⚠️ D435i IMU is NOT navigation-grade. Advisory use only.</p>
+            <!-- RIGHT SIDEBAR: TRACKING, SYSTEM HEALTH & TELEMETRY -->
+            <section class="workspace-col col-sidebar">
 
-                <hr class="divider">
+                <!-- MULTI-PERSON TRACKING PANEL -->
+                <div class="card tracking-panel">
+                    <div class="panel-header">
+                        <div class="panel-title-group">
+                            <h3>Multi-Person Tracking</h3>
+                            <span id="tracker-state-tag" class="badge">ACTIVE</span>
+                        </div>
+                        <span id="active-track-counter" class="metric-pill pill-blue">0 Active</span>
+                    </div>
+                    <div class="table-wrap">
+                        <table class="robotics-table" id="tracking-table">
+                            <thead>
+                                <tr>
+                                    <th>ID</th>
+                                    <th>Conf</th>
+                                    <th>Dist (m)</th>
+                                    <th>Depth Valid</th>
+                                    <th>State</th>
+                                    <th>Age</th>
+                                    <th>Last Seen</th>
+                                </tr>
+                            </thead>
+                            <tbody id="tracking-tbody">
+                                <tr>
+                                    <td colspan="7" class="empty-table-cell">No active person tracks in RealSense FOV.</td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
 
-                <div class="card-header">
-                    <h2>Pi 4B System Health</h2>
+                <!-- SYSTEM HEALTH & HARDWARE PERFORMANCE -->
+                <div class="card health-panel">
+                    <div class="panel-header">
+                        <div class="panel-title-group">
+                            <h3>Raspberry Pi 4B System Health</h3>
+                        </div>
+                        <span id="stale-metrics-warning" class="badge badge-warning hidden">STALE DATA</span>
+                    </div>
+
+                    <div class="health-metrics-grid">
+                        <!-- CPU UTILIZATION -->
+                        <div class="health-card">
+                            <div class="hc-head"><span class="hc-title">CPU UTILIZATION</span><span id="hc-cpu-val" class="hc-val">--%</span></div>
+                            <div class="hc-bar-wrap"><div id="hc-cpu-bar" class="hc-bar" style="width: 0%;"></div></div>
+                        </div>
+
+                        <!-- CPU TEMPERATURE -->
+                        <div class="health-card">
+                            <div class="hc-head"><span class="hc-title">CPU TEMPERATURE</span><span id="hc-temp-val" class="hc-val">--°C</span></div>
+                            <div class="hc-bar-wrap"><div id="hc-temp-bar" class="hc-bar bar-temp" style="width: 0%;"></div></div>
+                        </div>
+
+                        <!-- RAM UTILIZATION -->
+                        <div class="health-card">
+                            <div class="hc-head"><span class="hc-title">RAM USAGE</span><span id="hc-ram-val" class="hc-val">-- / -- MB</span></div>
+                            <div class="hc-bar-wrap"><div id="hc-ram-bar" class="hc-bar bar-ram" style="width: 0%;"></div></div>
+                        </div>
+
+                        <!-- PIPELINE FPS & DROPS -->
+                        <div class="health-card">
+                            <div class="hc-head"><span class="hc-title">FPS & DROPS</span><span id="hc-fps-val" class="hc-val">-- FPS</span></div>
+                            <div class="hc-subline">YOLO: <span id="hc-infer-fps">--</span> FPS | Drops: <span id="hc-drops">0</span></div>
+                        </div>
+                    </div>
                 </div>
-                <div class="telemetry-grid">
-                    <div class="tel-item"><span class="label">CPU Usage:</span> <span id="sys-cpu" class="val">--%</span></div>
-                    <div class="tel-item"><span class="label">RAM Usage:</span> <span id="sys-ram" class="val">--%</span></div>
-                    <div class="tel-item"><span class="label">CPU Temp:</span> <span id="sys-temp" class="val">--°C</span></div>
-                    <div class="tel-item"><span class="label">Drops:</span> <span id="sys-drops" class="val">0</span></div>
+
+                <!-- READ-ONLY VEHICLE TELEMETRY -->
+                <div class="card telemetry-panel">
+                    <div class="panel-header">
+                        <div class="panel-title-group">
+                            <h3>Vehicle Flight Telemetry</h3>
+                            <span class="badge">MAVLink (Strictly Read-Only)</span>
+                        </div>
+                        <span id="mavlink-conn-badge" class="metric-pill pill-grey">NO LINK</span>
+                    </div>
+                    <div class="telemetry-compact-grid">
+                        <div class="tel-box"><span class="t-lbl">BATTERY</span><span id="t-bat" class="t-val">--%</span></div>
+                        <div class="tel-box"><span class="t-lbl">ALTITUDE</span><span id="t-alt" class="t-val">-- m</span></div>
+                        <div class="tel-box"><span class="t-lbl">SPEED</span><span id="t-spd" class="t-val">-- m/s</span></div>
+                        <div class="tel-box"><span class="t-lbl">MODE</span><span id="t-mode" class="t-val">MANUAL</span></div>
+                        <div class="tel-box"><span class="t-lbl">ARM STATUS</span><span id="t-arm" class="t-val">DISARMED</span></div>
+                        <div class="tel-box"><span class="t-lbl">HEADING</span><span id="t-yaw" class="t-val">--°</span></div>
+                    </div>
                 </div>
+
             </section>
         </main>
 
-        <!-- BOTTOM: DETECTIONS LOG -->
-        <section class="card table-card">
-            <div class="card-header">
-                <h2>Verified & Candidate Detections (Local SQLite Recorded)</h2>
-                <span id="det-count" class="badge">0 Detections</span>
+        <!-- BOTTOM WORKSPACE: CHRONOLOGICAL EVENT HISTORY -->
+        <section class="card events-panel">
+            <div class="panel-header">
+                <div class="panel-title-group">
+                    <h3>System & Perception Event Timeline</h3>
+                    <span class="stream-coord-tag">Chronological Deduplicated Log</span>
+                </div>
+                <div class="panel-metrics">
+                    <span id="event-count-badge" class="metric-pill pill-blue">0 Events</span>
+                    <button id="btn-clear-events" class="btn-micro">Clear View</button>
+                </div>
             </div>
-            <div class="table-container">
-                <table class="data-table">
-                    <thead>
-                        <tr>
-                            <th>Time</th>
-                            <th>Category</th>
-                            <th>Confidence</th>
-                            <th>Distance</th>
-                            <th>Verification Status</th>
-                            <th>Geo Tag</th>
-                        </tr>
-                    </thead>
-                    <tbody id="detections-tbody">
-                        <tr><td colspan="6" class="text-muted">No detections recorded in current session.</td></tr>
-                    </tbody>
-                </table>
+            <div class="events-timeline-wrap" id="events-timeline">
+                <div class="event-row-empty">No system or perception events recorded.</div>
             </div>
         </section>
     </div>
 
+    <!-- CLIENT WEBSOCKET & UI CONTROLLER SCRIPT -->
     <script src="/static/app.js"></script>
 </body>
 </html>
-

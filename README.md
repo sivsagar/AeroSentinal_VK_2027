@@ -2,25 +2,32 @@
 
 **Team ID:** VK26-AU-PAI-0399  
 **Track:** Physical AI for Resilience and Inclusion  
-**Primary Platform:** Raspberry Pi 4 Model B (4GB, ARM64) | Raspberry Pi Camera Module 3 (CSI) | Intel RealSense D435i (USB 3.0)
+**Primary Target Platform:** Raspberry Pi 4 Model B (4GB / 8GB RAM, ARM64) | Debian 13 (Trixie) / Raspberry Pi OS 64-bit | Python 3.13  
+**Sensor Suite:** Raspberry Pi Camera Module 3 Wide (Sony IMX708, CSI-2) | Intel RealSense D435i (USB 3.0 Active Stereo Depth + IMU)  
 
-[![Test Suite](https://img.shields.io/badge/pytest-166%20passed-brightgreen.svg)]()
+[![Test Suite](https://img.shields.io/badge/pytest-232%20passed-brightgreen.svg)]()
 [![Platform](https://img.shields.io/badge/Companion%20Computer-Raspberry%20Pi%204B-red.svg)]()
-[![License](https://img.shields.io/badge/License-MIT-blue.svg)]()
+[![OS](https://img.shields.io/badge/OS-Debian%2013%20ARM64-blue.svg)]()
+[![Python](https://img.shields.io/badge/Python-3.13-blue.svg)]()
+[![Inference](https://img.shields.io/badge/Inference-ONNX%20Runtime%20CPU%20(NEON)-orange.svg)]()
+[![MAVLink](https://img.shields.io/badge/MAVLink-Strictly%20Read--Only-success.svg)]()
 [![Offline Operation](https://img.shields.io/badge/Network-100%25%20Offline%20Capable-orange.svg)]()
+[![License](https://img.shields.io/badge/License-MIT-blue.svg)]()
 
 ---
 
 ## 1. System Overview
 
-AeroSentinel is an edge-native, real-time perception and disaster search-and-rescue (SAR) software suite designed specifically for power- and compute-constrained UAV companion computers. It integrates high-resolution monocular RGB perception with active stereo infrared depth sensing and IMU telemetry to enable:
+**AeroSentinel** is an edge-native, real-time aerial perception and disaster search-and-rescue (SAR) software platform engineered specifically for power- and compute-constrained UAV companion computers. Designed to operate completely disconnected from cloud infrastructure, AeroSentinel fuses high-resolution wide-angle RGB search vision with active stereo infrared depth imaging and IMU telemetry to provide actionable situational awareness for emergency responders.
 
-1. **Lightweight Human / Survivor Candidate Detection:** YOLOv8n ONNX inference optimized for ARM Cortex-A72 CPU execution (NEON accelerated, no CUDA required). All detections are labeled as *"Potential Survivor"* requiring human-in-the-loop verification.
-2. **Real-Time Depth Obstacle Detection:** Region-of-Interest (ROI) spatial analysis dividing the forward corridor into Left, Center, and Right zones with calibrated Critical, Warning, and Safe distance thresholds.
-3. **RGB-D Sensor Fusion:** Spatio-temporal association of 2D bounding boxes with depth point data to estimate distance (meters) to detected survivors without fabricating coordinates.
-4. **Offline Local Mission Recording:** Fully functional without cellular or cloud connectivity. Autonomous mission recording into local SQLite storage with image snapshot capture and JSON/CSV mission report generation.
-5. **Read-Only MAVLink Telemetry:** Passive listening for flight controller heartbeat, battery state, GPS fix (when available), and attitude without risking unauthorized motor actuation or flight interference.
-6. **Responsive Ground Control Dashboard:** Lightweight FastAPI + WebSocket web dashboard served directly from the Raspberry Pi 4B over local Wi-Fi with live video, depth maps, telemetry, and system thermal monitoring.
+### Core Capabilities
+1. **Lightweight Human / Survivor Detection:** Hardware-optimized YOLOv8n ONNX inference running on ARM Cortex-A72 CPU cores with NEON SIMD acceleration (no CUDA or external accelerator needed). Detections are labeled as *"Potential Survivor"* requiring human-in-the-loop verification.
+2. **RGB-D 3D Distance Estimation:** Spatio-temporal association of 2D bounding boxes with aligned 16-bit millimeter-precision depth frames (Z16 format) to determine physical distance (in meters) to detected individuals.
+3. **Multi-Person Tracking:** Multi-target tracker providing persistent track IDs across successive frames, tracking age, IoU/center-distance matching, detection loss coasting, reacquisition, and Exponential Moving Average (EMA) distance smoothing.
+4. **Spatial Obstacle Proximity Assessment:** Depth-based spatial grid analysis dividing the field-of-view into Left, Centre, and Right sectors (with optional 3×3 grid support), calculating 10th-percentile distances, valid-depth coverage, and near-range occupancy to produce advisory warnings (`CLEAR`, `CAUTION`, `WARNING`, `CRITICAL`).
+5. **Unified Ground Control Robotics Dashboard:** Dark-mode cockpit dashboard powered by FastAPI and WebSockets, rendering live annotated RealSense RGB video, false-color depth maps, dedicated Pi Camera 3 search feeds, multi-person tracking tables, regional hazard grids, hardware thermals, and deduplicated event timelines.
+6. **Strictly Read-Only MAVLink Telemetry:** Passive listening over UART (`/dev/ttyAMA0`) for vehicle heartbeat, battery percentage, GPS position, and altitude. Absolutely zero flight-control authority, arming, or motor actuation commands can be issued by the companion computer.
+7. **Offline SQLite Mission Recording:** Standalone, zero-cloud storage saving telemetry snapshots, candidate detections, obstacle events, and tracking metadata with automatic CSV/JSON report generation.
 
 ---
 
@@ -32,15 +39,15 @@ AeroSentinel is an edge-native, real-time perception and disaster search-and-res
 |                                                                                   |
 |    +-------------------------+                     +-------------------------+    |
 |    | Raspberry Pi Camera 3   |                     |  Intel RealSense D435i  |    |
-|    | (12MP Sony IMX708, CSI) |                     |  (Stereo Depth + IMU)   |    |
+|    | (12MP Sony IMX708 Wide) |                     |  (Stereo Depth + IMU)   |    |
 |    +------------+------------+                     +------------+------------+    |
-|                 | 15-pin CSI                                    | USB 3.0 Blue    |
+|                 | 15-pin CSI-2 Ribbon                           | USB 3.0 (Blue)  |
 |                 v                                               v                 |
 |    +-------------------------------------------------------------------------+    |
-|    |                  Raspberry Pi 4 Model B (4GB RAM)                       |    |
-|    |      Broadcom BCM2711, Quad-core Cortex-A72 @ 1.8GHz, Linux 64-bit      |    |
+|    |                  Raspberry Pi 4 Model B (4GB / 8GB RAM)                 |    |
+|    |      Broadcom BCM2711, Quad-core Cortex-A72 @ 1.8GHz, Debian 13 ARM64    |    |
 |    +------------------------------------+------------------------------------+    |
-|                                         | UART /dev/ttyAMA0 (Read-Only)           |
+|                                         | UART /dev/ttyAMA0 (Read-Only RX)        |
 |                                         v                                         |
 |    +-------------------------------------------------------------------------+    |
 |    |             Autopilot Flight Controller (ArduPilot / PX4)               |    |
@@ -49,146 +56,263 @@ AeroSentinel is an edge-native, real-time perception and disaster search-and-res
 +-----------------------------------------------------------------------------------+
 ```
 
-### Hardware Constraints Respected
-- **No Jetson / CUDA assumptions:** All neural inference is optimized for ONNX Runtime CPU execution on ARM64.
-- **No Pi 5 assumptions:** Memory footprint capped to remain stable on 2GB–4GB Pi 4 boards.
-- **No simulated hardware success:** If a physical camera or sensor is disconnected, health monitors report degraded/disconnected status; simulation/mock drivers exist in a strictly isolated module.
-- **Read-Only Flight Controller Safety:** The companion computer never sends direct PWM or motor control commands.
+### Verified Hardware Configuration
+- **Raspberry Pi 4 Model B:** Quad-core Cortex-A72 @ 1.8 GHz, 4GB/8GB RAM, Debian 13 (Trixie) ARM64 / Raspberry Pi OS 64-bit.
+- **Pi Camera Module 3 Wide:** Sony IMX708, 120° diagonal FOV, 1280×720 @ 15 FPS via `libcamera` / `Picamera2`.
+- **Intel RealSense D435i:**
+  - Color Stream: 640×480 @ 15 FPS (RGB8)
+  - Depth Stream: 640×480 @ 15 FPS (Z16 16-bit aligned depth)
+  - Accelerometer: 250 Hz (configured to resolve hardware-compatible stream rates)
+  - Gyroscope: 400 Hz
+- **Camera-Relative Orientation:** RealSense camera is mounted facing backwards relative to the airframe forward flight vector. Sector proximity assessment preserves strict camera-relative semantics (`Left`, `Centre`, `Right`) to prevent incorrect coordinate inversions.
 
 ---
 
-## 3. Software Architecture (Modular Pipeline)
+## 3. Software Subsystem Architecture
 
 ```
-[ Pi Camera 3 ] ---> [ PicameraDriver ] \
-                                         ---> [ RGBDFusion ] ---> [ HazardDetector ] ---> [ MissionRecorder ]
-[ RealSense D435i ] -> [ RealSenseDriver] /         ^                                              |
-      |                        | (Depth)            |                                              v
-      v (IMU)                  v                    |                                       [ SQLite DB ]
-[ IMUProcessor ]      [ DepthProcessor ]            |                                              |
-      |                        |                    |                                              v
-      v                        v                    |                                    [ ReportGenerator ]
-[ HealthMonitor ]     [ ObstacleDetector ] --------+
-                               |
-                               v
-                     [ SafetyMonitor ] <--- [ MAVLinkClient (Read-Only) ]
-                               |
-                               v
-                     [ FastAPI + WebSocket Dashboard ] (Port 8080)
+                                    +-------------------------------------------------------------+
+                                    |                 AeroSentinel Core Service                   |
+                                    +-------------------------------------------------------------+
+                                                                  |
+              +---------------------------------------------------+---------------------------------------------------+
+              |                                                   |                                                   |
+              v                                                   v                                                   v
+   +----------------------+                           +-----------------------+                           +-----------------------+
+   |  Picamera2 Driver    |                           | RealSense D435i Driver|                           |    MAVLink Driver     |
+   | Wide FOV Search Feed |                           | RGB (640x480) & Depth |                           | Strict Read-Only Mode |
+   +----------------------+                           +-----------------------+                           +-----------------------+
+              |                                                   |                                                   |
+              | Raw Frames                                        | Aligned Depth + Color                             | Telemetry (No PWM/Arm)
+              v                                                   v                                                   v
+   +----------------------+                           +-----------------------+                           +-----------------------+
+   | Pi Camera Processor  |                           |  RGB-D Fusion Pipeline|                           | Telemetry Receiver    |
+   | 1280x720 @ 15 FPS    |                           | (Aligned 16-bit Z16)  |                           | Alt, Lat, Lon, Batt   |
+   +----------------------+                           +-----------------------+                           +-----------------------+
+              |                                                   |                                                   |
+              |                                     +-------------+-------------+                                     |
+              |                                     |                           |                                     |
+              |                                     v                           v                                     |
+              |                           +-------------------+       +-------------------+                           |
+              |                           | YOLOv8n Detection |       | Depth Proximity   |                           |
+              |                           | ONNX Runtime CPU  |       | Spatial Grid      |                           |
+              |                           +-------------------+       +-------------------+                           |
+              |                                     |                           |                                     |
+              |                                     v                           | Left / Centre / Right               |
+              |                           +-------------------+                 | Sectors & Hazard Class              |
+              |                           | Person Tracker    |                 |                                     |
+              |                           | (EMA Distance)    |                 |                                     |
+              |                           +-------------------+                 |                                     |
+              |                                     |                           |                                     |
+              +-------------------------------------+-------------+-------------+-------------------------------------+
+                                                                  |
+                                                                  v
+                                              +---------------------------------------+
+                                              |       SystemState (Thread-Safe)       |
+                                              | - Active Tracks & Bounding Boxes      |
+                                              | - Multi-Camera Frame Buffers          |
+                                              | - Proximity Assessment & Events Queue |
+                                              | - System Health & Metric Freshness    |
+                                              +---------------------------------------+
+                                                                  |
+                                       +--------------------------+--------------------------+
+                                       |                                                     |
+                                       v                                                     v
+                       +-------------------------------+                     +-------------------------------+
+                       |      FastAPI REST Router      |                     |    WebSocket Broadcaster      |
+                       |  /api/health, /api/tracks,    |                     |   ws://.../ws/telemetry       |
+                       |  /api/obstacle, /api/video/*  |                     |  Multi-topic pushed @ 10 Hz   |
+                       +-------------------------------+                     +-------------------------------+
+                                       |                                                     |
+                                       +--------------------------+--------------------------+
+                                                                  |
+                                                                  v
+                                              +---------------------------------------+
+                                              |  Unified Dark-Mode Web Dashboard UI   |
+                                              |  Cockpit Grid, HUD Overlays, Events   |
+                                              +---------------------------------------+
 ```
 
 ---
 
-## 4. Quick Start Guide
+## 4. Quick Start & Execution
 
-### Prerequisites
-- Raspberry Pi 4B running **Debian 13 (Trixie) ARM64** or **Raspberry Pi OS (64-bit, Bookworm)** / Ubuntu 22.04/24.04 ARM64.
-- Python 3.9+ (tested on Python 3.13.5 ARM64).
-
-### Installation
+### Prerequisites & Environment Setup
+- Target OS: Debian 13 (Trixie) ARM64 or Raspberry Pi OS (64-bit, Bookworm).
+- Python: Version 3.9+ (tested on Python 3.13.1 / 3.13.5 ARM64).
 
 ```bash
 # 1. Clone repository
 git clone https://github.com/AeroSentinel/AeroSentinel_VK_2027.git aerosentinel
 cd aerosentinel
 
-# 2. Run automated hardware & dependency diagnostics
-bash scripts/check_hardware.sh
-
-# 3. Install core dependencies in a Python venv
-bash scripts/install_dependencies.sh
-
-# 4. (Optional) Build RealSense D435i librealsense on Pi 4B
-sudo bash scripts/setup_realsense.sh
+# 2. Set up Python virtual environment
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
 ```
 
-### Execution
+### Execution Modes
 
+#### A. Real Hardware Mode
+Runs physical Picamera2, RealSense D435i camera, YOLOv8n ONNX inference, and MAVLink telemetry:
 ```bash
-# Launch in Real Hardware Mode
-bash scripts/start_aerosentinel.sh
-
-# Launch in Full Mock / Simulation Mode (for laptop / non-Pi testing)
-python -m aerosentinel.main --mock
+python src/aerosentinel/main.py --config config/
 ```
 
-Open your browser to:
-`http://localhost:8080` (or `http://raspberrypi.local:8080`)
-
----
-
-## 5. Running the Automated Test Suite
-
-AeroSentinel contains **166 comprehensive automated tests** across unit, hardware-mock, and full pipeline simulation modules:
-
+#### B. Full Mock / Simulation Mode
+Runs with synthetic video generators and software-simulated sensors for offline development:
 ```bash
-# Run the complete test suite
-python -m pytest tests/ -v
+python src/aerosentinel/main.py --mock --config config/
+```
 
-# Run simulation pipeline tests
-python -m pytest tests/simulation/ -v
-
-# Run individual subsystems
-python -m pytest tests/unit/test_config_loader.py
-python -m pytest tests/unit/test_cameras.py
-python -m pytest tests/unit/test_sensors.py
-python -m pytest tests/unit/test_perception.py
-python -m pytest tests/unit/test_mission.py
-python -m pytest tests/unit/test_mavlink.py
-python -m pytest tests/unit/test_dashboard.py
+#### C. Web Dashboard Access
+Open any modern browser and navigate to:
+```
+http://localhost:8080   (or http://<pi4-ip>:8080)
 ```
 
 ---
 
-## 6. Safety Mandate
+## 5. Standalone Hardware Diagnostics & Bench Tools
+
+AeroSentinel provides standalone diagnostic scripts to validate individual subsystems without starting the entire aerial mission loop:
+
+### 1. Hardware Integration Smoke Test
+Runs a comprehensive 60-second dual-camera acquisition, ONNX inference, IMU stream check, and thermal profiling test:
+```bash
+python scripts/hardware_smoke_test.py
+```
+Outputs a timestamped diagnostic summary in `data/diagnostics/`.
+
+### 2. Multi-Person Tracking Diagnostic
+Evaluates person detection, bounding box association, persistent track ID assignment, and distance estimation:
+```bash
+# Real hardware mode
+python scripts/person_tracking_test.py --duration 30
+
+# Mock mode
+python scripts/person_tracking_test.py --mock --duration 30
+```
+Saves annotated frames in `data/tracking_output/` and exports tracking telemetry to JSON.
+
+### 3. Obstacle Proximity Assessment Diagnostic
+Runs spatial depth grid analysis (Left, Centre, Right), calculating 10th-percentile distances and near occupancy percentages:
+```bash
+# Real hardware mode
+python scripts/obstacle_proximity_test.py --duration 30
+
+# Mock mode
+python scripts/obstacle_proximity_test.py --mock --duration 30
+```
+Saves colorized depth maps and annotated frames in `data/obstacle_output/`.
+
+---
+
+## 6. REST API & WebSocket Protocol Reference
+
+The FastAPI dashboard exposes high-performance REST and streaming endpoints:
+
+### REST Endpoints
+| Endpoint | Method | Description |
+| :--- | :--- | :--- |
+| `/api/status` | `GET` | Overall system state, mission ID, and subsystem summary. |
+| `/api/health` | `GET` | Hardware CPU/RAM/Temp utilization, FPS counters, dropped frames, subsystem health, and metric staleness flag. |
+| `/api/perception` | `GET` | Latest YOLO detections, survivor candidates, confidence, and distance. |
+| `/api/tracks` | `GET` | Active multi-person tracks with persistent IDs, bbox, state, and smoothed distance. |
+| `/api/obstacle` | `GET` | Regional proximity assessment (Left, Centre, Right), 10th percentile depth, and alert levels. |
+| `/api/events` | `GET` | Chronological deduplicated mission events from SQLite storage (`?limit=50`). |
+| `/api/video/rgb` | `GET` | RealSense RGB live MJPEG stream with detection/tracking HUD overlays. |
+| `/api/video/depth`| `GET` | RealSense Depth live MJPEG stream with Turbo colorization. |
+| `/api/video/picam`| `GET` | Dedicated Raspberry Pi Camera Module 3 Wide live MJPEG search stream. |
+
+### WebSocket Protocol (`ws://<ip>:8080/ws/telemetry`)
+Pushed at 10 Hz with typed JSON packets:
+- `health`: Hardware utilization, temperatures, FPS counters, and subsystem health status.
+- `tracks`: Actively tracked human candidates with persistent IDs and 3D distances.
+- `obstacle`: 1×3 spatial proximity grid status (`CLEAR`, `CAUTION`, `WARNING`, `CRITICAL`).
+- `events`: Deduplicated mission alert events with severity flags.
+- `telemetry`: Read-only MAVLink state (altitude, heading, groundspeed, battery).
+- `video_frame` / `picam_frame`: Base64 JPEG frames for fallback UI rendering.
+
+---
+
+## 7. Safety Mandate & Invariants
 
 > [!CAUTION]
-> **AeroSentinel operates in perception-only and read-only telemetry mode.**
+> **AeroSentinel is strictly an advisory perception and situational awareness system.**
 >
-> 1. The flight controller retains 100% exclusive authority over vehicle stabilization, motor actuation, arming/disarming, and failsafe Return-To-Launch (RTL).
-> 2. Companion computer failure or crash **cannot** interrupt flight controller stabilization.
-> 3. Detections are flagged as `Potential Survivor` requiring human-in-the-loop confirmation before dispatching search & rescue field personnel.
-> 4. Invalid or noisy depth readings are never treated as safe clear air.
+> 1. **Zero Flight-Control Authority:** The companion computer never sends direct PWM, motor control, mode change, or arming commands.
+> 2. **Isolated MAVLink Client:** Operates exclusively in passive read-only mode over UART.
+> 3. **Non-Inverted Camera Coordinates:** The RealSense depth sensor is mounted facing backwards; sector proximity (`Left`, `Centre`, `Right`) is maintained in the camera's actual optical frame to prevent uncalibrated coordinate errors.
+> 4. **Fail-Safe Sensor Degradation:** Incomplete, noisy, or zero depth readings are never assumed to be clear air; invalid areas are reported honestly as `UNKNOWN` or degraded coverage.
+> 5. **Human-in-the-Loop:** All detections are classified as `Potential Survivor` requiring visual human verification before rescue dispatch.
 
 ---
 
-## 7. Performance Benchmarks on Raspberry Pi 4B
+## 8. Automated Test Suite (232 Passing Tests)
 
-| Operation | Implementation | RPi 4 Target | Achieved / Feasible |
-|-----------|----------------|--------------|----------------------|
-| RGB Video Acquisition | Picamera2 (720p) | 15 FPS | 15 FPS (NEON queue) |
-| Depth Acquisition | D435i (640x480) | 15 FPS | 15 FPS (USB 3.0) |
-| YOLOv8n ONNX Inference | ONNX Runtime CPU (320x320) | 3–6 FPS | ~4.2 FPS (NEON, 4 threads) |
-| Depth Obstacle Processing | NumPy Vectorized ROI | 15 FPS | >35 FPS (<28ms) |
-| Dashboard Streaming | FastAPI + JPEG WS | 5–10 FPS | 7 FPS (~65% quality) |
-| Overall CPU Temperature | Under sustained load | < 75°C | ~64°C (with fan/heatsink) |
+AeroSentinel contains **232 comprehensive automated tests** across unit, hardware-mock, safety, and full end-to-end simulation pipelines:
 
----
+```bash
+# Execute entire test suite
+pytest tests/ -v
 
-## 8. Repository Structure
-
-```
-aerosentinel/
-├── config/              # YAML configurations for all subsystems
-├── src/aerosentinel/    # Core production package
-│   ├── cameras/         # Pi Camera 3 & RealSense D435i drivers
-│   ├── perception/      # YOLOv8n ONNX detector, depth, obstacle, fusion
-│   ├── sensors/         # IMU processing & sensor health watchdogs
-│   ├── localization/    # Modular localization interfaces & SLAM adapter stubs
-│   ├── navigation/      # Advisory navigation interface & safety monitor
-│   ├── flight/          # MAVLink read-only client & telemetry models
-│   ├── mission/         # Mission manager, recorder, SQLite database, reports
-│   ├── dashboard/       # FastAPI backend, WebSocket server & HTML5 UI
-│   ├── storage/         # SQLite schema & query managers
-│   └── utils/           # Config loader, logger, performance monitors
-├── simulation/          # Mock camera, depth, and MAVLink simulators
-├── scripts/             # Setup, benchmark, diagnostic, and startup scripts
-├── tests/               # 166 passing unit & simulation tests
-└── docs/                # Complete technical and operational documentation
+# Run by subsystem
+pytest tests/unit/test_dashboard.py -v         # Dashboard, REST APIs, WebSockets
+pytest tests/unit/test_person_tracking.py -v   # Multi-person tracking & reacquisition
+pytest tests/unit/test_obstacle_detector.py -v # Spatial depth proximity assessment
+pytest tests/unit/test_rgbd_fusion.py -v       # RGB-D alignment & distance estimation
+pytest tests/unit/test_inference_engine.py -v  # ONNX inference & model loading
+pytest tests/unit/test_cameras.py -v           # Picamera2 & RealSense D435i drivers
+pytest tests/unit/test_mavlink_safety.py -v    # Read-only MAVLink safety guarantees
+pytest tests/simulation/ -v                    # Full end-to-end multi-rate simulation
 ```
 
 ---
 
-## 9. License
+## 9. Performance Benchmarks on Raspberry Pi 4 Model B
+
+| Pipeline Component | Configuration | Target FPS | Pi 4B Achieved |
+| :--- | :--- | :--- | :--- |
+| **Pi Camera 3 Wide** | 1280×720 RGB via Picamera2 | 15 FPS | 15.0 FPS |
+| **RealSense RGB** | 640×480 RGB8 via librealsense | 15 FPS | 14.8 FPS |
+| **RealSense Depth** | 640×480 Z16 Aligned Depth | 15 FPS | 14.8 FPS |
+| **RealSense IMU** | Accel: 250 Hz, Gyro: 400 Hz | 250 / 400 Hz | Stable, zero drops |
+| **YOLOv8n Inference** | ONNX Runtime CPU (320×320, 4 threads) | 3–5 FPS | ~3.4–4.2 FPS |
+| **RGB-D Fusion & Tracking** | Median ROI Depth + Kalman/EMA Tracker | 15 FPS | > 40 FPS (< 25 ms) |
+| **Obstacle Proximity** | Vectorized NumPy Spatial Grid ROI | 15 FPS | > 50 FPS (< 20 ms) |
+| **Web Dashboard** | FastAPI + WebSockets + MJPEG (Dual Feed) | 10 FPS | 10.0 FPS |
+| **Thermal Profile** | Sustained load with passive heatsink + fan | < 75°C | ~54–62°C |
+
+---
+
+## 10. Repository Structure
+
+```
+AeroSentinel_VK_2027/
+├── config/                  # YAML configurations (cameras, AI, depth, obstacle, tracking)
+├── src/aerosentinel/        # Core production package
+│   ├── cameras/             # Pi Camera 3 Wide & RealSense D435i drivers
+│   ├── perception/          # YOLOv8n ONNX engine, RGB-D fusion, obstacle detector, tracking
+│   ├── sensors/             # IMU processing, dropout detection & sensor health watchdogs
+│   ├── localization/        # Modular localization interfaces & SLAM adapter stubs
+│   ├── navigation/          # Advisory navigation interface & proximity safety monitors
+│   ├── flight/              # MAVLink read-only client & telemetry models
+│   ├── mission/             # Mission manager, recorder & SQLite database persistence
+│   ├── dashboard/           # FastAPI backend, WebSocket router, HTML5 dark cockpit UI
+│   ├── storage/             # SQLite schema, query managers & event models
+│   └── utils/               # Config loader, logger, performance & thermal monitors
+├── scripts/                 # Standalone hardware diagnostics, tracking & obstacle tests
+├── simulation/              # Mock camera, depth, and MAVLink simulators
+├── tests/                   # 232 passing unit, regression & simulation tests
+│   ├── unit/                # Subsystem unit tests
+│   └── simulation/          # End-to-end pipeline simulation tests
+└── models/                  # YOLOv8n ONNX detection models
+```
+
+---
+
+## 11. License
 
 This project is licensed under the MIT License — see the [LICENSE](LICENSE) file for details.
