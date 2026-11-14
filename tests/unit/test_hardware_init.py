@@ -94,8 +94,7 @@ class TestInferenceEngineLifecycle:
 class TestHardwareModeStrictness:
     def test_hardware_mode_missing_model_raises_file_not_found(self, config_loader: ConfigLoader):
         """Hardware mode (mock=False) must raise FileNotFoundError if ONNX model is missing."""
-        # Ensure model file does not exist
-        assert not Path(_REPO_ROOT / "models" / "yolov8n.onnx").is_file()
+        config_loader.set("detection.model_path", "models/nonexistent_yolov8.onnx")
 
         with pytest.raises(FileNotFoundError) as exc_info:
             _init_perception(config_loader, mock=False)

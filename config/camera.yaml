@@ -13,6 +13,8 @@ depth_camera:
   depth_resolution: [640, 480]
   color_resolution: [640, 480]
   fps: 15
+  accel_fps: 250
+  gyro_fps: 400
   depth_format: Z16
   color_format: BGR8
   mock: false

@@ -85,3 +85,82 @@ class TestCameraManager:
 
         mgr.stop_all()
 
+
+class TestRealSenseIMUConfiguration:
+    """Verify that RealSense D435i requests 250 Hz for accel and 400 Hz for gyro."""
+
+    def test_default_imu_fps_constants(self):
+        from aerosentinel.cameras.realsense_driver import (
+            _DEFAULT_ACCEL_FPS,
+            _DEFAULT_GYRO_FPS,
+        )
+        assert _DEFAULT_ACCEL_FPS == 250
+        assert _DEFAULT_GYRO_FPS == 400
+
+    def test_realsense_driver_imu_stream_rates(self):
+        from unittest.mock import MagicMock
+        import aerosentinel.cameras.realsense_driver as rs_mod
+
+        # Construct mock pyrealsense2
+        mock_rs = MagicMock()
+        mock_rs.stream.depth = "STREAM_DEPTH"
+        mock_rs.stream.color = "STREAM_COLOR"
+        mock_rs.stream.accel = "STREAM_ACCEL"
+        mock_rs.stream.gyro = "STREAM_GYRO"
+        mock_rs.format.z16 = "FORMAT_Z16"
+        mock_rs.format.bgr8 = "FORMAT_BGR8"
+        mock_rs.format.motion_xyz32f = "FORMAT_XYZ32F"
+
+        mock_pipeline = MagicMock()
+        mock_cfg = MagicMock()
+        mock_rs.pipeline.return_value = mock_pipeline
+        mock_rs.config.return_value = mock_cfg
+
+        mock_profile = MagicMock()
+        mock_pipeline.start.return_value = mock_profile
+        mock_depth_sensor = MagicMock()
+        mock_depth_sensor.get_depth_scale.return_value = 0.001
+        mock_profile.get_device.return_value.first_depth_sensor.return_value = mock_depth_sensor
+
+        original_avail = rs_mod._RS_AVAILABLE
+        original_rs = getattr(rs_mod, "rs", None)
+        try:
+            rs_mod._RS_AVAILABLE = True
+            rs_mod.rs = mock_rs
+
+            driver = rs_mod.RealSenseCameraDriver(config={"fps": 15})
+            assert driver.accel_fps == 250
+            assert driver.gyro_fps == 400
+
+            driver._init_pipeline()
+
+            # Find all enable_stream calls
+            calls = mock_cfg.enable_stream.call_args_list
+            accel_calls = [c for c in calls if len(c[0]) >= 3 and c[0][0] == "STREAM_ACCEL"]
+            gyro_calls = [c for c in calls if len(c[0]) >= 3 and c[0][0] == "STREAM_GYRO"]
+
+            assert len(accel_calls) == 1, "Expected exactly 1 enable_stream call for accel"
+            assert len(gyro_calls) == 1, "Expected exactly 1 enable_stream call for gyro"
+
+            # Check accel rate is 250 Hz (not the obsolete 200 Hz)
+            assert accel_calls[0][0][2] == 250
+            assert accel_calls[0][0][2] != 200
+
+            # Check gyro rate is 400 Hz
+            assert gyro_calls[0][0][2] == 400
+
+            # Verify depth and color stream settings remain untouched
+            depth_calls = [c for c in calls if len(c[0]) >= 5 and c[0][0] == "STREAM_DEPTH"]
+            color_calls = [c for c in calls if len(c[0]) >= 5 and c[0][0] == "STREAM_COLOR"]
+            assert len(depth_calls) == 1
+            assert len(color_calls) == 1
+            assert depth_calls[0][0][1:5] == (640, 480, "FORMAT_Z16", 15)
+            assert color_calls[0][0][1:5] == (640, 480, "FORMAT_BGR8", 15)
+
+        finally:
+            rs_mod._RS_AVAILABLE = original_avail
+            if original_rs is not None:
+                rs_mod.rs = original_rs
+            elif hasattr(rs_mod, "rs"):
+                delattr(rs_mod, "rs")
+

@@ -40,6 +40,8 @@ logger = logging.getLogger(__name__)
 _DEFAULT_DEPTH_RES: List[int] = [640, 480]
 _DEFAULT_COLOR_RES: List[int] = [640, 480]
 _DEFAULT_FPS: int = 15
+_DEFAULT_ACCEL_FPS: int = 250
+_DEFAULT_GYRO_FPS: int = 400
 _DEPTH_SCALE_DEFAULT: float = 0.001  # librealsense default: 1 unit = 1 mm → 0.001 m
 
 
@@ -82,6 +84,8 @@ class RealSenseCameraDriver(BaseDepthDriver):
         self._depth_resolution: Tuple[int, int] = (int(dr[0]), int(dr[1]))
         self._color_resolution: Tuple[int, int] = (int(cr[0]), int(cr[1]))
         self._fps: int = int(cfg.get("fps", _DEFAULT_FPS))
+        self._accel_fps: int = int(cfg.get("accel_fps", _DEFAULT_ACCEL_FPS))
+        self._gyro_fps: int = int(cfg.get("gyro_fps", _DEFAULT_GYRO_FPS))
         self._usb_timeout: float = float(cfg.get("usb_timeout_s", 10))
         self._reconnect_interval: float = float(cfg.get("reconnect_interval_s", 5))
 
@@ -111,6 +115,16 @@ class RealSenseCameraDriver(BaseDepthDriver):
     # ------------------------------------------------------------------
     # Properties
     # ------------------------------------------------------------------
+
+    @property
+    def accel_fps(self) -> int:
+        """Configured accelerometer rate in Hz."""
+        return self._accel_fps
+
+    @property
+    def gyro_fps(self) -> int:
+        """Configured gyroscope rate in Hz."""
+        return self._gyro_fps
 
     @property
     def is_running(self) -> bool:
@@ -239,8 +253,8 @@ class RealSenseCameraDriver(BaseDepthDriver):
                 rs.format.bgr8,
                 self._fps,
             )
-            cfg.enable_stream(rs.stream.accel, rs.format.motion_xyz32f, 200)
-            cfg.enable_stream(rs.stream.gyro, rs.format.motion_xyz32f, 400)
+            cfg.enable_stream(rs.stream.accel, rs.format.motion_xyz32f, self._accel_fps)
+            cfg.enable_stream(rs.stream.gyro, rs.format.motion_xyz32f, self._gyro_fps)
 
             profile = pipeline.start(cfg)
             depth_sensor = profile.get_device().first_depth_sensor()

@@ -160,7 +160,7 @@ Sony IMX708 sensor
 | Depth Resolution | Up to 1280×720 @ 30 FPS; AeroSentinel uses **640×480 @ 15 FPS** |
 | RGB Sensor | OV2740 |
 | RGB Resolution | Up to 1920×1080; AeroSentinel uses **848×480 @ 15 FPS** |
-| IMU | Bosch BMI055 (3-axis accel @ 400 Hz, 3-axis gyro @ 400 Hz) |
+| IMU | Bosch BMI055 (3-axis accel @ 250 Hz, 3-axis gyro @ 400 Hz) |
 | Interface | **USB 3.1 Gen 1 (USB 3.0 required)** |
 | USB Bandwidth | ~3.2 Gbps at max res; AeroSentinel config uses ~200 MB/s |
 | Connector | USB-C (use USB-C to USB-A for RPi 4) |
