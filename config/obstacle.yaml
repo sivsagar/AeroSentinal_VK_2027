@@ -1,0 +1,68 @@
+# ============================================================
+# AeroSentinel — Real-Time Obstacle Proximity Configuration
+# Team: VK26-AU-PAI-0399
+#
+# IMPORTANT SAFETY NOTICE:
+# All distance thresholds and timing parameters specified below
+# are PROVISIONAL BENCH VALUES intended solely for indoor lab
+# and simulation testing.
+#
+# Actual operational thresholds MUST be formally calibrated
+# against physical drone dimensions, sensor mounting positions
+# and orientation, vehicle flight dynamics, forward velocity,
+# and stopping distances before any operational flight use.
+#
+# CAMERA ORIENTATION NOTICE:
+# Cameras are mounted backwards relative to the drone's intended
+# forward flight direction. Spatial analysis regions (Left, Centre,
+# Right) remain strictly in the RealSense camera coordinate frame
+# to prevent coordinate inversion errors.
+# ============================================================
+
+obstacle:
+  # Spatial grid partitioning: "1x3" (Left, Centre, Right) or "3x3" (9-cell grid)
+  grid_layout: "1x3"
+
+  # Region of Interest (ROI) cropping fractions (0.0 to 1.0)
+  # Excludes ceiling, floor/propellers, and peripheral boundary artifacts
+  roi:
+    top_pct: 0.15       # Crop top 15% (sky/ceiling/rotor glare)
+    bottom_pct: 0.10    # Crop bottom 10% (ground/landing gear)
+    left_pct: 0.0       # Horizontal margin
+    right_pct: 0.0      # Horizontal margin
+
+  # Horizontal sector boundaries for "1x3" layout (fraction of frame width)
+  sectors_1x3:
+    left_pct: 0.33      # 0 to 33% of width
+    right_pct: 0.33     # 67% to 100% of width (centre takes remainder)
+
+  # Distance thresholds in metres (Provisional Bench Testing Values)
+  distances:
+    critical_distance_m: 1.0    # <= 1.0 m: CRITICAL immediate proximity hazard
+    warning_distance_m: 2.0     # <= 2.0 m: WARNING close-range obstacle
+    caution_distance_m: 3.5     # <= 3.5 m: CAUTION approaching hazard
+
+  # RealSense D435i operational sensing range limits (metres)
+  range_limits:
+    min_range_m: 0.25           # Minimum reliable depth for RealSense D435i
+    max_range_m: 8.0            # Maximum reliable depth range
+
+  # Quality and validity filtering criteria
+  quality:
+    min_valid_coverage_pct: 10.0            # Below 10% valid depth coverage -> UNKNOWN
+    near_range_occupancy_threshold_pct: 15.0 # >= 15% of valid pixels in near-range confirms warning
+    reliable_depth_percentile: 10.0          # 10th percentile used as nearest reliable depth (filters noise)
+
+  # Temporal stability and filtering
+  temporal:
+    smoothing_alpha: 0.30       # Exponential Moving Average weight for new frames (0.0 - 1.0)
+    hysteresis_escalate_frames: 1   # Consecutive frames required to escalate warning level
+    hysteresis_deescalate_frames: 3 # Consecutive frames required to de-escalate warning level
+    stale_timeout_s: 2.0        # Reset warning duration after 2.0s without valid depth
+    max_dropout_frames: 3       # Number of consecutive dropped frames before declaring UNKNOWN
+
+  # Visualisation settings
+  visualization:
+    overlay_alpha: 0.35         # Semi-transparent overlay opacity
+    show_hud: true              # Display status badges, distances, and coverage
+    show_candidate_reticle: true # Draw crosshair on closest reliable proximity candidate

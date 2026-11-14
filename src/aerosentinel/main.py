@@ -62,6 +62,7 @@ _CONFIG_FILES = [
     "system.yaml",
     "camera.yaml",
     "depth.yaml",
+    "obstacle.yaml",
     "ai.yaml",
     "fusion.yaml",
     "tracking.yaml",
@@ -277,9 +278,10 @@ def _init_obstacle_detector(cfg: ConfigLoader) -> Optional[Any]:
         from aerosentinel.perception.depth_processor import DepthProcessor
         from aerosentinel.perception.obstacle_detector import ObstacleDetector
 
+        obs_cfg = cfg.get("obstacle", {})
         depth_proc = DepthProcessor()
-        obs_det = ObstacleDetector()
-        logger.info("DepthProcessor + ObstacleDetector initialised.")
+        obs_det = ObstacleDetector(config=obs_cfg)
+        logger.info("DepthProcessor + ObstacleDetector initialised (grid=%s).", obs_det.grid_layout)
         return depth_proc, obs_det
     except Exception as exc:
         logger.error("Obstacle detector init failed: %s", exc)
@@ -585,29 +587,19 @@ def _main_loop(
                 # depth_proc.process() expects uint16 mm array
                 processed_depth = depth_proc.process(depth_mm)
                 depth_m = processed_depth.depth_meters   # float32 metres, 0=invalid
-                obstacle_report = obs_det.analyze(depth_m)
+                obstacle_report = obs_det.analyze(depth_m, tracks=active_tracks, timestamp=_ts)
 
                 if system_state is not None and obstacle_report is not None:
-                    system_state.latest_obstacle = {
-                        "overall_status": obstacle_report.overall_status.name,
-                        "warning_active": obstacle_report.warning_active,
-                        "closest_obstacle_m": obstacle_report.closest_obstacle_m,
-                        "left": {
-                            "status": obstacle_report.left.status.name,
-                            "min_distance_m": obstacle_report.left.min_distance_m,
-                        },
-                        "center": {
-                            "status": obstacle_report.center.status.name,
-                            "min_distance_m": obstacle_report.center.min_distance_m,
-                        },
-                        "right": {
-                            "status": obstacle_report.right.status.name,
-                            "min_distance_m": obstacle_report.right.min_distance_m,
-                        },
-                    }
-                    # Push colourised depth visualisation to dashboard
-                    if system_state is not None:
-                        system_state.depth_frame = processed_depth.colormap
+                    system_state.latest_obstacle = obstacle_report.to_dict()
+                    # Push colourised depth visualisation with proximity sectors to dashboard
+                    system_state.depth_frame = obs_det.create_proximity_depth_visualization(
+                        depth_m, obstacle_report
+                    )
+
+                if annotated_frame is not None and obstacle_report is not None:
+                    annotated_frame = obs_det.draw_proximity_overlay(
+                        annotated_frame, obstacle_report
+                    )
             except Exception as exc:
                 logger.debug("Obstacle processing error: %s", exc)
 

@@ -18,6 +18,7 @@ from .obstacle_detector import (
     ObstacleDetector,
     ObstacleReport,
     ObstacleStatus,
+    ProximityLevel,
     RegionAnalysis,
 )
 from .rgbd_fusion import FusedDetection, RGBDFusion
@@ -42,6 +43,7 @@ __all__ = [
     "ObstacleDetector",
     "ObstacleReport",
     "ObstacleStatus",
+    "ProximityLevel",
     "RegionAnalysis",
     "FusedDetection",
     "RGBDFusion",
